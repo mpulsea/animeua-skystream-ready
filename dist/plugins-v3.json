@@ -5,9 +5,15 @@
     "version": 14,
     "baseUrl": "https://animeua.club",
     "description": "AnimeUA - українське аніме для SkyStream",
-    "authors": ["AnVa / ChatGPT port"],
-    "languages": ["uk"],
-    "categories": ["Anime"],
+    "authors": [
+      "AnVa / ChatGPT port"
+    ],
+    "languages": [
+      "uk"
+    ],
+    "categories": [
+      "Anime"
+    ],
     "url": "https://raw.githubusercontent.com/mpulsea/animeua-skystream-ready/main/dist/com.anva.animeua.sky"
   }
 ]
