@@ -31,6 +31,43 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Apply AnimeUA v20 compatibility patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('animeua/plugin.js')
+          s = p.read_text(encoding='utf-8')
+
+          if 'function playerFileValue(' not in s:
+              replacement = r'''function playerFileValue(ph){var m=/\bfile\s*:/.exec(ph||'');if(!m)return null;var i=m.index+m[0].length,n=ph.length;while(i<n&&/\s/.test(ph.charAt(i)))i++;if(i>=n)return null;var q=ph.charAt(i);if(q==='"'||q==="'"||q==='`'){i++;var out='',esc=false;for(;i<n;i++){var c=ph.charAt(i);if(esc){out+=c;esc=false;continue}if(c==='\\'){esc=true;out+=c;continue}if(c===q)break;out+=c}return dec(out).replace(/\\(["'\/])/g,'$1')}if(q==='['){var start=i,depth=0,str='',esc2=false;for(;i<n;i++){var ch=ph.charAt(i);if(str){if(esc2){esc2=false;continue}if(ch==='\\'){esc2=true;continue}if(ch===str)str='';continue}if(ch==='"'||ch==="'"||ch==='`'){str=ch;continue}if(ch==='[')depth++;else if(ch===']'){depth--;if(depth===0)return dec(ph.slice(start,i+1))}}}var r=ph.slice(i).match(/^(https?:\/\/[^\s,}]+)/i);return r?dec(r[1]):null}
+async function player(s){var f=s.match(/<div[^>]*class=["'][^"']*video-inside[^"']*["'][^>]*>[\s\S]*?<iframe[^>]*(?:data-src|src)=["']([^"']+)["'][^>]*>/i)||s.match(/<iframe[^>]*(?:data-src|src)=["']([^"']+)["'][^>]*>/i);if(!f)return null;var pu=abs(f[1]),ph=await html(pu,{'User-Agent':UA,'Referer':manifest.baseUrl+'/'});return playerFileValue(ph)}
+function episodeNumber'''
+              s2, count = re.subn(
+                  r'async function player\(s\)\{.*?\}\nfunction episodeNumber',
+                  replacement,
+                  s,
+                  count=1,
+                  flags=re.S,
+              )
+              if count != 1:
+                  raise SystemExit('Could not patch AnimeUA player()')
+              s = s2
+
+          s = s.replace('skystream=19', 'skystream=20')
+          s = s.replace(
+              'inari|didko|sundragon|sun dragon|робота голосом|hatoshi|білі джин|48 volts|amanogawa|molfar|adrian zax|melodicvoice|lifecycle',
+              'inari|didko|sundragon|sun dragon|робота голосом|рідний голос|ridnyi holos|ashdi|moonanime|togarashi|fanvox|далі буде|ukrainefastdub|aniua|vrdub|jenary|hatoshi|білі джин|48 volts|amanogawa|molfar|adrian zax|melodicvoice|lifecycle'
+          )
+          s = s.replace(
+              "[/робота\\s+голосом/i,'Робота Голосом'],",
+              "[/робота\\s+голосом/i,'Робота Голосом'],[/рідний\\s+голос|ridnyi\\s+holos/i,'Рідний Голос'],[/ashdi/i,'ASHDI'],[/moonanime/i,'MOONANIME'],[/togarashi/i,'Togarashi'],[/fanvox/i,'FanVoxUA'],[/далі\\s+буде/i,'Далі Буде'],[/ukrainefastdub/i,'UkraineFastDUB'],[/aniua/i,'AniUa'],[/vrdub/i,'VRdub'],[/jenary/i,'Jenary'],"
+          )
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
       - name: Deploy SkyStream repository
         run: |
           npm install -g skystream-cli
