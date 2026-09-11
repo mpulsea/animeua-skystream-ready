@@ -2,7 +2,7 @@
   {
     "packageName": "com.anva.animeua",
     "name": "AnimeUA",
-    "version": 24,
+    "version": 25,
     "baseUrl": "https://animeua.club",
     "description": "AnimeUA - українське аніме для SkyStream",
     "authors": [
@@ -14,6 +14,6 @@
     "categories": [
       "Anime"
     ],
-    "url": "https://raw.githubusercontent.com/mpulsea/animeua-skystream-ready/main/dist/com.anva.animeua-v24.sky"
+    "url": "https://raw.githubusercontent.com/mpulsea/animeua-skystream-ready/main/dist/com.anva.animeua-v25.sky"
   }
 ]
