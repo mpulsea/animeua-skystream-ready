@@ -1,0 +1,7 @@
+{
+  "name": "AnimeUA SkyStream",
+  "packageName": "com.anva.animeua.repo",
+  "description": "Український AnimeUA provider для SkyStream",
+  "manifestVersion": 1,
+  "pluginLists": []
+}
