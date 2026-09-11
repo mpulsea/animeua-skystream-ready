@@ -7,10 +7,7 @@ on:
       - 'dist/**'
       - 'repo.json'
       - 'repo-v2.json'
-      - 'artwork/**'
-      - 'animeua/poster-map.json'
-  schedule:
-    - cron: '17 */6 * * *'
+      - 'repo-v3.json'
   workflow_dispatch:
 
 permissions:
@@ -33,19 +30,16 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Cache AnimeUA artwork
-        run: node scripts/cache-animeua-artwork.mjs
-
       - name: Deploy SkyStream repository
         run: |
           npm install -g skystream-cli
           skystream deploy -u https://raw.githubusercontent.com/${{ github.repository }}/main
           cp dist/plugins.json dist/plugins-v2.json
 
-      - name: Commit generated files and artwork
+      - name: Commit generated files
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "chore: refresh AnimeUA artwork and deploy [skip ci]" || echo "No changes to commit"
+          git commit -m "chore: deploy SkyStream repository [skip ci]" || echo "No changes to commit"
           git push
