@@ -34,8 +34,26 @@ jobs:
         run: |
           npm install -g skystream-cli
           skystream deploy -u https://raw.githubusercontent.com/${{ github.repository }}/main
+
+          VERSION=$(node -p "require('./animeua/plugin.json').version")
+          VERSIONED_PACKAGE="dist/com.anva.animeua-v${VERSION}.sky"
+          cp dist/com.anva.animeua.sky "$VERSIONED_PACKAGE"
+
           cp dist/plugins.json dist/plugins-v2.json
           cp dist/plugins.json dist/plugins-v3.json
+
+          node - <<'NODE'
+          const fs = require('fs');
+          const version = require('./animeua/plugin.json').version;
+          const packageUrl = `https://raw.githubusercontent.com/${process.env.GITHUB_REPOSITORY}/main/dist/com.anva.animeua-v${version}.sky`;
+          for (const file of ['dist/plugins.json', 'dist/plugins-v2.json', 'dist/plugins-v3.json']) {
+            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+            for (const plugin of data) {
+              if (plugin.packageName === 'com.anva.animeua') plugin.url = packageUrl;
+            }
+            fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
+          }
+          NODE
 
       - name: Commit generated files
         run: |
