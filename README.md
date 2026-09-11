@@ -25,7 +25,7 @@
 
 Після успішного Action:
 
-`https://raw.githubusercontent.com/ТВІЙ_GITHUB_USERNAME/animeua-skystream/main/repo.json`
+`https://raw.githubusercontent.com/mpulsea/animeua-skystream/main/repo.json`
 
 Якщо назва репозиторію інша - заміни `animeua-skystream` на свою.
 
