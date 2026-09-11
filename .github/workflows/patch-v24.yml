@@ -28,7 +28,7 @@ jobs:
           new_func = r'''async function playerDebug(s,pageUrl){var d={iframe:false,player:false,file:false,playerLen:0,fileType:'none',error:'',status:0,attempt:0};try{var f=s.match(/<div[^>]*class=["'][^"']*video-inside[^"']*["'][^>]*>[\s\S]*?<iframe[^>]*(?:data-src|src)=["']([^"']+)["'][^>]*>/i)||s.match(/<iframe[^>]*(?:data-src|src)=["']([^"']+)["'][^>]*>/i);if(!f)return{file:null,debug:d};d.iframe=true;var pu=abs(f[1]),ph='',rr=await getRaw(pu,{});d.attempt=1;d.status=rr.status||0;if(rr.body){ph=rr.body}else{var relay=''' + repr(proxy + '/player?page=') + r'''+encodeURIComponent(pageUrl||manifest.baseUrl+'/');rr=await getRaw(relay,{});d.attempt=9;d.status=rr.status||0;if(rr.error)d.error=rr.error;if(rr.body)ph=rr.body}d.player=!!ph;d.playerLen=ph?ph.length:0;if(!ph)return{file:null,debug:d};var pf=playerFileValue(ph);d.file=!!pf;if(pf)d.fileType=/^https?:\/\//i.test(pf)?'url':(pf.charAt(0)==='['?'array':'other');return{file:pf,debug:d}}catch(e){d.error=String(e).slice(0,120);return{file:null,debug:d}}}'''
 
           pat = r'async function playerDebug\(s,pageUrl\)\{.*?\}\nfunction episodeNumber'
-          ns, n = re.subn(pat, new_func + '\nfunction episodeNumber', s, count=1, flags=re.S)
+          ns, n = re.subn(pat, lambda m: new_func + '\nfunction episodeNumber', s, count=1, flags=re.S)
           if n != 1:
               raise SystemExit('playerDebug function not found')
           ns = ns.replace('skystream=23', 'skystream=24')
