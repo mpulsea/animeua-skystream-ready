@@ -21,4 +21,4 @@ jobs:
           node-version: '22'
       - name: Deploy temporary Cloudflare Worker
         working-directory: proxy
-        run: npx wrangler@latest deploy --temporary --yes
+        run: npx wrangler@latest deploy --temporary
