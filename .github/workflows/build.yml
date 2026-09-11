@@ -35,6 +35,7 @@ jobs:
           npm install -g skystream-cli
           skystream deploy -u https://raw.githubusercontent.com/${{ github.repository }}/main
           cp dist/plugins.json dist/plugins-v2.json
+          cp dist/plugins.json dist/plugins-v3.json
 
       - name: Commit generated files
         run: |
