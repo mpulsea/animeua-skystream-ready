@@ -7,6 +7,7 @@ const RAW_BASE = 'https://raw.githubusercontent.com/mpulsea/animeua-skystream-re
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1';
 const ART_DIR = path.resolve('artwork');
 const MAP_FILE = path.resolve('animeua/poster-map.json');
+const CATALOG_PAGES = 5;
 
 const headers = {
   'User-Agent': UA,
@@ -120,50 +121,108 @@ async function downloadArtwork(sourceUrl, key) {
   return `${RAW_BASE}/artwork/${filename}`;
 }
 
+async function loadExistingMap() {
+  try {
+    const raw = await fs.readFile(MAP_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return {
+      byUrl: parsed.byUrl || {},
+      byTitle: parsed.byTitle || {},
+    };
+  } catch {
+    return { byUrl: {}, byTitle: {} };
+  }
+}
+
+async function cachedFileStillExists(rawUrl) {
+  if (!rawUrl || !rawUrl.startsWith(`${RAW_BASE}/artwork/`)) return false;
+  const filename = rawUrl.slice(`${RAW_BASE}/artwork/`.length);
+  try {
+    await fs.access(path.join(ART_DIR, filename));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function collectCatalog() {
+  const all = [];
+  const seen = new Set();
+
+  for (let page = 1; page <= CATALOG_PAGES; page += 1) {
+    const url = page === 1 ? `${BASE}/` : `${BASE}/page/${page}/`;
+    const html = await fetchText(url);
+    const cards = parseCards(html);
+    console.log(`Catalog page ${page}: ${cards.length} cards`);
+
+    for (const card of cards) {
+      if (seen.has(card.url)) continue;
+      seen.add(card.url);
+      all.push(card);
+    }
+  }
+
+  return all;
+}
+
 async function main() {
-  await fs.rm(ART_DIR, { recursive: true, force: true });
   await fs.mkdir(ART_DIR, { recursive: true });
 
-  const home = await fetchText(`${BASE}/`);
-  const cards = parseCards(home).slice(0, 60);
-  if (!cards.length) throw new Error('No AnimeUA cards found on homepage');
+  const cards = await collectCatalog();
+  if (!cards.length) throw new Error('No AnimeUA cards found');
 
+  const oldMap = await loadExistingMap();
   const byUrl = {};
   const byTitle = {};
-  let cached = 0;
+  let reused = 0;
+  let downloaded = 0;
+  let failed = 0;
 
   for (const card of cards) {
     try {
+      const existing = oldMap.byUrl[card.url] || oldMap.byTitle[card.title];
+      if (await cachedFileStillExists(existing)) {
+        byUrl[card.url] = existing;
+        byTitle[card.title] = existing;
+        reused += 1;
+        continue;
+      }
+
       let source = card.image;
       if (!source) {
         const detail = await fetchText(card.url);
         source = meta(detail, 'og:image');
       }
-      if (!source) {
-        console.warn(`No poster source: ${card.title}`);
-        continue;
-      }
+      if (!source) throw new Error('poster source not found');
+
       const key = crypto.createHash('sha1').update(card.url).digest('hex').slice(0, 16);
       const raw = await downloadArtwork(source, key);
       byUrl[card.url] = raw;
       byTitle[card.title] = raw;
-      cached += 1;
-      console.log(`Cached ${cached}/${cards.length}: ${card.title}`);
+      downloaded += 1;
+      console.log(`Downloaded ${downloaded}: ${card.title}`);
     } catch (e) {
+      failed += 1;
       console.warn(`Failed ${card.title}: ${e.message}`);
     }
   }
 
-  if (!cached) throw new Error('No AnimeUA posters were cached');
-
   const map = {
     updatedAt: new Date().toISOString(),
-    count: cached,
+    pages: CATALOG_PAGES,
+    catalogCount: cards.length,
+    count: Object.keys(byUrl).length,
+    reused,
+    downloaded,
+    failed,
     byUrl,
     byTitle,
   };
+
   await fs.writeFile(MAP_FILE, `${JSON.stringify(map, null, 2)}\n`, 'utf8');
-  console.log(`Poster map written with ${cached} entries.`);
+  console.log(`Poster map: ${map.count}/${cards.length}, reused=${reused}, downloaded=${downloaded}, failed=${failed}`);
+
+  if (!map.count) throw new Error('No AnimeUA posters available');
 }
 
 await main();
