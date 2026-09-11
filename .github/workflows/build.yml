@@ -8,6 +8,7 @@ on:
       - 'repo.json'
       - 'repo-v2.json'
       - 'repo-v3.json'
+      - 'repo-v4.json'
   workflow_dispatch:
 
 permissions:
@@ -41,12 +42,13 @@ jobs:
 
           cp dist/plugins.json dist/plugins-v2.json
           cp dist/plugins.json dist/plugins-v3.json
+          cp dist/plugins.json dist/plugins-v4.json
 
           node - <<'NODE'
           const fs = require('fs');
           const version = require('./animeua/plugin.json').version;
           const packageUrl = `https://raw.githubusercontent.com/${process.env.GITHUB_REPOSITORY}/main/dist/com.anva.animeua-v${version}.sky`;
-          for (const file of ['dist/plugins.json', 'dist/plugins-v2.json', 'dist/plugins-v3.json']) {
+          for (const file of ['dist/plugins.json', 'dist/plugins-v2.json', 'dist/plugins-v3.json', 'dist/plugins-v4.json']) {
             const data = JSON.parse(fs.readFileSync(file, 'utf8'));
             for (const plugin of data) {
               if (plugin.packageName === 'com.anva.animeua') plugin.url = packageUrl;
