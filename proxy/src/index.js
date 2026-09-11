@@ -89,6 +89,85 @@ async function fetchImage(target) {
   return new Response(upstream.body, { status: upstream.status, headers });
 }
 
+
+function isPrivateHost(host = '') {
+  const h = String(host).toLowerCase();
+  if (h === 'localhost' || h === '::1' || h.endsWith('.local')) return true;
+  if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h)) return true;
+  const m = h.match(/^172\.(\d+)\./);
+  if (m && Number(m[1]) >= 16 && Number(m[1]) <= 31) return true;
+  return h === '0.0.0.0' || h === '169.254.169.254';
+}
+
+function hlsProxyUrl(originUrl, workerBase) {
+  return `${workerBase}/hls?url=${encodeURIComponent(originUrl)}`;
+}
+
+function rewriteHls(body, originUrl, workerBase) {
+  const lines = String(body || '').split(/\r?\n/);
+  return lines.map((line) => {
+    const t = line.trim();
+    if (!t) return line;
+    if (!t.startsWith('#')) {
+      const abs = absoluteUrl(t, originUrl);
+      if (!abs) return line;
+      return /\.m3u8(?:[?#]|$)/i.test(abs) ? hlsProxyUrl(abs, workerBase) : abs;
+    }
+    return line.replace(/URI=(['"])(.*?)\1/gi, (all, q, raw) => {
+      const abs = absoluteUrl(raw, originUrl);
+      if (!abs) return all;
+      const out = /\.m3u8(?:[?#]|$)/i.test(abs) ? hlsProxyUrl(abs, workerBase) : abs;
+      return `URI=${q}${out}${q}`;
+    });
+  }).join('\n');
+}
+
+async function relayHls(rawUrl, workerBase) {
+  let target;
+  try { target = new URL(rawUrl); } catch { return new Response('Invalid HLS url', { status: 400, headers: textHeaders() }); }
+  if (!/^https?:$/.test(target.protocol) || isPrivateHost(target.hostname) || !/\.m3u8(?:$|[?#])/i.test(target.toString())) {
+    return new Response('Forbidden HLS url', { status: 403, headers: textHeaders() });
+  }
+
+  const cache = caches.default;
+  const cacheKey = new Request(`${workerBase}/hls-cache?url=${encodeURIComponent(target.toString())}`);
+  const hit = await cache.match(cacheKey);
+  if (hit) {
+    const headers = new Headers(hit.headers);
+    headers.set('x-animeua-hls-cache', 'HIT');
+    return new Response(hit.body, { status: hit.status, headers });
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(target.toString(), {
+      headers: {
+        'User-Agent': UA,
+        'Accept': 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+        'Referer': 'https://animeua.club/',
+      },
+      redirect: 'follow',
+      cf: { cacheEverything: true, cacheTtl: 5 },
+    });
+  } catch {
+    return Response.redirect(target.toString(), 302);
+  }
+  if (!upstream.ok) return Response.redirect(target.toString(), 302);
+
+  const body = await upstream.text();
+  if (!/^\s*#EXTM3U/i.test(body)) return Response.redirect(target.toString(), 302);
+  const rewritten = rewriteHls(body, target.toString(), workerBase);
+  const headers = new Headers({
+    'content-type': 'application/vnd.apple.mpegurl; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'cache-control': 'public, max-age=5, s-maxage=5',
+    'x-animeua-hls-cache': 'MISS',
+  });
+  const response = new Response(rewritten, { status: 200, headers });
+  try { await cache.put(cacheKey, response.clone()); } catch {}
+  return response;
+}
+
 async function relayPlayer(pageUrl) {
   let page;
   try { page = new URL(pageUrl); } catch { return new Response('Invalid page url', { status: 400, headers: textHeaders() }); }
@@ -143,6 +222,12 @@ export default {
 
     if (reqUrl.pathname === '/health') {
       return new Response('ok', { headers: textHeaders() });
+    }
+
+    if (reqUrl.pathname === '/hls') {
+      const raw = reqUrl.searchParams.get('url');
+      if (!raw) return new Response('Missing url', { status: 400, headers: textHeaders() });
+      return relayHls(raw, reqUrl.origin);
     }
 
     if (reqUrl.pathname === '/player') {
