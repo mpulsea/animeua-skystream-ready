@@ -1,0 +1,9 @@
+{
+  "name": "AnimeUA v22 Direct",
+  "packageName": "com.anva.animeua.repository.v22direct",
+  "description": "AnimeUA v22 direct repository for SkyStream",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/mpulsea/animeua-skystream-ready/main/dist/plugins-v22-direct.json"
+  ]
+}
