@@ -144,3 +144,5 @@ jobs:
           git commit -m "fix: v35 modern AnimeUA player discovery and relay"
           git pull --rebase origin main
           git push origin HEAD:main
+
+# trigger
