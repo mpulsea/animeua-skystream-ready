@@ -26,3 +26,5 @@ jobs:
           git commit -m "fix: v36 use active AnimeUA worker endpoint"
           git pull --rebase origin main
           git push origin HEAD:main
+
+# trigger
