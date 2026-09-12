@@ -1,0 +1,62 @@
+name: Diagnose AnimeUA player
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diag-player.yml'
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch title page and player chain
+        shell: bash
+        run: |
+          set -u
+          PAGE='https://animeua.club/8376-viiskova-istoriia-malenkoi-divchynky-2.html'
+          UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'
+          echo '=== PAGE HEADERS ==='
+          curl -L -sS -D /tmp/h1 -A "$UA" -e 'https://animeua.club/' "$PAGE" -o /tmp/page.html || true
+          sed -n '1,20p' /tmp/h1 || true
+          echo "page bytes: $(wc -c </tmp/page.html 2>/dev/null || echo 0)"
+          echo '=== PAGE PLAYER SIGNALS ==='
+          grep -Eio '<iframe[^>]*>|\bfile\s*:[^,;<]{0,240}|https?://[^"'"'"' <>]+(player|embed|video)[^"'"'"' <>]*' /tmp/page.html | head -30 || true
+
+          python3 - <<'PY'
+          import re, html, urllib.parse
+          s=open('/tmp/page.html',errors='ignore').read()
+          page='https://animeua.club/8376-viiskova-istoriia-malenkoi-divchynky-2.html'
+          tags=re.findall(r'<iframe\b[^>]*>',s,re.I)
+          names=['data-src','src','data-url','data-player','data-frame','data-video']
+          out=[]
+          for tag in tags:
+            for n in names:
+              m=re.search(r'(?:^|\s)'+re.escape(n)+r'\s*=\s*(["\'])(.*?)\1',tag,re.I)
+              if m:
+                u=urllib.parse.urljoin(page,html.unescape(m.group(2)))
+                if u not in out: out.append(u)
+          print('IFRAMES', len(out))
+          for i,u in enumerate(out[:10],1): print(f'{i}: {u}')
+          open('/tmp/iframes.txt','w').write('\n'.join(out))
+          PY
+
+          n=0
+          while IFS= read -r URL && [ $n -lt 3 ]; do
+            n=$((n+1))
+            echo "=== IFRAME $n: $URL ==="
+            curl -L -sS -D "/tmp/h$n" -A "$UA" -e "$PAGE" "$URL" -o "/tmp/p$n.html" || true
+            sed -n '1,12p' "/tmp/h$n" || true
+            echo "bytes: $(wc -c < /tmp/p$n.html 2>/dev/null || echo 0)"
+            grep -Eio '\bfile\s*:[^,;<]{0,300}|<iframe[^>]*>|https?://[^"'"'"' <>]+\.m3u8[^"'"'"' <>]*' "/tmp/p$n.html" | head -30 || true
+          done < /tmp/iframes.txt
+
+          echo '=== WORKER HEALTH ==='
+          curl -L -sS -D - 'https://animeua-image-proxy.telling-fox.workers.dev/health' -o /tmp/health.txt || true
+          cat /tmp/health.txt || true
+
+          echo '=== WORKER PLAYER ==='
+          curl -L -sS -D /tmp/wh 'https://animeua-image-proxy.telling-fox.workers.dev/player?page=https%3A%2F%2Fanimeua.club%2F8376-viiskova-istoriia-malenkoi-divchynky-2.html' -o /tmp/wp.html || true
+          sed -n '1,20p' /tmp/wh || true
+          echo "worker bytes: $(wc -c </tmp/wp.html 2>/dev/null || echo 0)"
+          grep -Eio '\bfile\s*:[^,;<]{0,300}|<iframe[^>]*>|https?://[^"'"'"' <>]+\.m3u8[^"'"'"' <>]*' /tmp/wp.html | head -30 || true
