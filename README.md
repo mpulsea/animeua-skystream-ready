@@ -2,6 +2,8 @@
 
 Український AnimeUA provider для SkyStream.
 
+Current plugin version: **37**.
+
 ## Repository URL
 
 `https://raw.githubusercontent.com/mpulsea/animeua-skystream-ready/main/repo.json`
