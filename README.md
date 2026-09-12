@@ -4,7 +4,7 @@
 
 Current plugin version: **42**.
 
-v41 resolves video streams fresh at playback time so temporary player URLs are not cached in episode links.
+v42 keeps stable episode links and resolves fresh video streams only at playback time. It uses UACDN first when available and falls back to Ashdi without depending on the old temporary Worker.
 
 ## Repository URL
 
