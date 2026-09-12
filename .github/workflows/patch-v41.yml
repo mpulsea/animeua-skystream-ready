@@ -1,0 +1,89 @@
+name: Patch AnimeUA v41 stability
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/patch-v41.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Apply stable episode-token architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          p=Path('animeua/plugin.js')
+          s=p.read_text()
+          if 'skystream=40' not in s or 'AnimeUA v40' not in s:
+              raise SystemExit('Expected v40 source not found - refusing blind patch')
+
+          s=s.replace('skystream=40','skystream=41')
+
+          marker="function packStudios(list){return'animeua:studios:'+encodeURIComponent(JSON.stringify(list))}"
+          if marker not in s:
+              raise SystemExit('packStudios marker not found')
+          replacement=marker+"\nfunction packEpisode(page,episode){return'animeua:episode:'+encodeURIComponent(JSON.stringify({page:String(page||''),episode:parseInt(episode,10)||1}))}\nfunction unpackEpisode(token){try{return JSON.parse(decodeURIComponent(String(token||'').slice('animeua:episode:'.length)))}catch(e){return null}}"
+          s=s.replace(marker,replacement,1)
+
+          start=s.index('async function load(url,cb){')
+          end=s.index('\nfunction normQuality',start)
+          new_load=r'''async function load(url,cb){try{var s=await html(url);if(!s)return cb({success:false,error:'AnimeUA: сторінка недоступна.'});var h=s.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i),title=h?cleanTitle(h[1]):cleanTitle(meta(s,'og:title')||'AnimeUA'),poster=detailPoster(s),banner=detailBanner(s,poster),dm=s.match(/<div class=["'][^"']*page__text[^"']*["'][^>]*>([\s\S]*?)<\/div>/i),normalDesc=dm?txt(dm[1]):'',eps=[],pd=await playerDebug(s,url),pf=pd.file;if(pf){if(/^https?:\/\//i.test(pf)){eps.push(new Episode({name:'Серія 1',url:packEpisode(url,1),season:1,episode:1,dubStatus:'dubbed',posterUrl:poster}))}else try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a);for(var i=0;i<g.nums.length;i++){var n=g.nums[i],studios=uniqueStudios(g.by[n]);if(!studios.length)continue;eps.push(new Episode({name:'Серія '+n,url:packEpisode(url,n),season:1,episode:n,dubStatus:'dubbed',posterUrl:poster}))}}catch(e){console.log('[AnimeUA v41][LOAD PARSE] '+String(e))}}console.log('[AnimeUA v41][LOAD] page='+String(url)+' episodes='+eps.length+' fileType='+(pd&&pd.debug?pd.debug.fileType:'none'));cb({success:true,data:new MultimediaItem({title:title,url:url,posterUrl:poster,bannerUrl:banner,type:'anime',description:normalDesc,episodes:eps})})}catch(e){console.log('[AnimeUA v41][LOAD FATAL] '+String(e));cb({success:false,error:'AnimeUA load: '+String(e)})}}'''
+          s=s[:start]+new_load+s[end:]
+
+          stream_start=s.index('async function loadStreams(url,cb){')
+          stream_end=s.index('\nglobalThis.getHome=',stream_start)
+          new_streams=r'''async function freshEpisodeStreams(token){var info=unpackEpisode(token);if(!info||!info.page)return{streams:[],error:'invalid episode token'};var ep=parseInt(info.episode,10)||1,s=await html(info.page);if(!s)return{streams:[],error:'page unavailable'};var pd=await playerDebug(s,info.page),pf=pd.file;if(!pf)return{streams:[],error:'player file not found'+(pd&&pd.debug&&pd.debug.error?' - '+pd.debug.error:'')};var o=[];if(/^https?:\/\//i.test(pf)){addFile(o,pf,'AnimeUA');return{streams:o,error:''}}try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a),list=g.by[ep]||[],studios=uniqueStudios(list);for(var i=0;i<studios.length;i++)addFile(o,studios[i].file,studios[i].name);if(!o.length)return{streams:[],error:'episode '+ep+' streams not found'};return{streams:o,error:''}}catch(e){return{streams:[],error:'player parse '+String(e)}}}
+async function loadStreams(url,cb){try{var r=String(url||'').trim(),o=[];console.log('[AnimeUA v41][STREAMS] input='+r.slice(0,180));if(r.indexOf('animeua:episode:')===0){var fresh=await freshEpisodeStreams(r);o=fresh.streams||[];if(!o.length)return cb({success:false,error:'AnimeUA v41: '+(fresh.error||'fresh streams not found')})}else if(r.indexOf('animeua:studios:')===0){var raw=decodeURIComponent(r.slice('animeua:studios:'.length)),studios=JSON.parse(raw);for(var i=0;i<studios.length;i++)addFile(o,studios[i].file,studios[i].name)}else if(r.indexOf('animeua:debug:')===0){return cb({success:false,error:decodeURIComponent(r.slice('animeua:debug:'.length))})}else addFile(o,r,'AnimeUA');console.log('[AnimeUA v41][STREAMS] parsed='+o.length);if(!o.length)return cb({success:false,error:'AnimeUA v41: відеопотік не знайдено.'});cb({success:true,data:o})}catch(e){console.log('[AnimeUA v41][STREAMS FATAL] '+String(e));cb({success:false,error:'AnimeUA v41 loadStreams: '+String(e)})}}'''
+          s=s[:stream_start]+new_streams+s[stream_end:]
+
+          # Remove any stale v40 diagnostic labels that may remain outside replaced functions.
+          s=s.replace('AnimeUA v40','AnimeUA v41')
+          p.write_text(s)
+
+          j=Path('animeua/plugin.json')
+          data=json.loads(j.read_text())
+          data['version']=41
+          j.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+
+          readme=Path('README.md')
+          if readme.exists():
+              t=readme.read_text()
+              import re
+              t=re.sub(r'Current plugin version: \*\*\d+\*\*\.', 'Current plugin version: **41**.', t)
+              readme.write_text(t)
+          PY
+
+      - name: Validate source before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check animeua/plugin.js
+          node -e "const j=require('./animeua/plugin.json'); if(j.version!==41) process.exit(2)"
+          grep -q "animeua:episode:" animeua/plugin.js
+          grep -q "freshEpisodeStreams" animeua/plugin.js
+          if grep -q "url:pf,season" animeua/plugin.js; then echo 'stale direct signed URL still stored in Episode'; exit 3; fi
+          if grep -q "url:packStudios(studios)" animeua/plugin.js; then echo 'stale signed studio token still stored in Episode'; exit 4; fi
+
+      - name: Commit v41 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add animeua/plugin.js animeua/plugin.json README.md
+          git commit -m "fix: resolve fresh AnimeUA streams at playback in v41"
+          git pull --rebase origin main
+          git push origin HEAD:main
