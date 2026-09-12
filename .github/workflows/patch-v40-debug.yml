@@ -1,0 +1,51 @@
+name: Patch AnimeUA v40 diagnostics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/patch-v40-debug.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Add v40 diagnostics
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('animeua/plugin.js')
+          s=p.read_text()
+          s=s.replace("skystream=39", "skystream=40")
+          old="""async function load(url,cb){try{var s=await html(url);if(!s)return cb({success:false,error:'AnimeUA: сторінка недоступна.'});var h=s.match(/<h1[^>]*>([\\s\\S]*?)<\\/h1>/i),title=h?cleanTitle(h[1]):cleanTitle(meta(s,'og:title')||'AnimeUA'),poster=detailPoster(s),banner=detailBanner(s,poster),dm=s.match(/<div class=[\"'][^\"']*page__text[^\"']*[\"'][^>]*>([\\s\\S]*?)<\\/div>/i),normalDesc=dm?txt(dm[1]):'',eps=[],pd=await playerDebug(s,url),pf=pd.file;if(pf){if(/^https?:\\/\\//i.test(pf)){eps.push(new Episode({name:'Серія 1',url:pf,season:1,episode:1,dubStatus:'dubbed',posterUrl:poster}))}else try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a);for(var i=0;i<g.nums.length;i++){var n=g.nums[i],studios=uniqueStudios(g.by[n]);if(!studios.length)continue;eps.push(new Episode({name:'Серія '+n,url:packStudios(studios),season:1,episode:n,dubStatus:'dubbed',posterUrl:poster}))}}catch(e){}}cb({success:true,data:new MultimediaItem({title:title,url:url,posterUrl:poster,bannerUrl:banner,type:'anime',description:normalDesc,episodes:eps})})}catch(e){cb({success:false,error:'AnimeUA load: '+String(e)})}}"""
+          new="""async function load(url,cb){try{console.log('[AnimeUA v40][LOAD] start '+url);var s=await html(url);console.log('[AnimeUA v40][LOAD] page bytes='+(s?s.length:0));if(!s)return cb({success:false,error:'AnimeUA v40 DEBUG: stage=page; body=0'});var h=s.match(/<h1[^>]*>([\\s\\S]*?)<\\/h1>/i),title=h?cleanTitle(h[1]):cleanTitle(meta(s,'og:title')||'AnimeUA'),poster=detailPoster(s),banner=detailBanner(s,poster),dm=s.match(/<div class=[\"'][^\"']*page__text[^\"']*[\"'][^>]*>([\\s\\S]*?)<\\/div>/i),normalDesc=dm?txt(dm[1]):'',eps=[],pd=await playerDebug(s,url),pf=pd.file,d=pd.debug||{};console.log('[AnimeUA v40][PLAYER] iframe='+d.iframe+' player='+d.player+' file='+d.file+' status='+d.status+' attempt='+d.attempt+' len='+d.playerLen+' type='+d.fileType+' error='+(d.error||''));var parseError='';if(pf){if(/^https?:\\/\\//i.test(pf)){eps.push(new Episode({name:'Серія 1',url:pf,season:1,episode:1,dubStatus:'dubbed',posterUrl:poster}))}else try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a);console.log('[AnimeUA v40][PARSE] flat='+a.length+' episodeGroups='+g.nums.length);for(var i=0;i<g.nums.length;i++){var n=g.nums[i],studios=uniqueStudios(g.by[n]);if(!studios.length)continue;eps.push(new Episode({name:'Серія '+n,url:packStudios(studios),season:1,episode:n,dubStatus:'dubbed',posterUrl:poster}))}}catch(e){parseError=String(e);console.log('[AnimeUA v40][PARSE ERROR] '+parseError)}}var dbg='[DEBUG v40] page='+s.length+' iframe='+!!d.iframe+' player='+!!d.player+' file='+!!d.file+' status='+(d.status||0)+' attempts='+(d.attempt||0)+' playerLen='+(d.playerLen||0)+' fileType='+(d.fileType||'none')+' episodes='+eps.length+(d.error?' netErr='+d.error:'')+(parseError?' parseErr='+parseError.slice(0,100):'');console.log('[AnimeUA v40][RESULT] '+dbg);if(!eps.length)eps.push(new Episode({name:'DEBUG v40 - натисни для помилки',url:'animeua:debug:'+encodeURIComponent(dbg),season:1,episode:1,dubStatus:'dubbed',posterUrl:poster}));cb({success:true,data:new MultimediaItem({title:title,url:url,posterUrl:poster,bannerUrl:banner,type:'anime',description:normalDesc+'\\n\\n'+dbg,episodes:eps})})}catch(e){console.log('[AnimeUA v40][LOAD FATAL] '+String(e));cb({success:false,error:'AnimeUA v40 load fatal: '+String(e)})}}"""
+          if old not in s:
+              raise SystemExit('load() target not found - refusing blind patch')
+          s=s.replace(old,new)
+          old2="""async function loadStreams(url,cb){try{var o=[],r=String(url||'').trim();if(r.indexOf('animeua:studios:')===0){var raw=decodeURIComponent(r.slice('animeua:studios:'.length)),studios=JSON.parse(raw);for(var i=0;i<studios.length;i++)addFile(o,studios[i].file,studios[i].name)}else addFile(o,r,'AnimeUA');if(!o.length)return cb({success:false,error:'AnimeUA: відеопотік не знайдено.'});await warmStreams(o);cb({success:true,data:o})}catch(e){cb({success:false,error:'AnimeUA loadStreams: '+String(e)})}}"""
+          new2="""async function loadStreams(url,cb){try{var r=String(url||'').trim();console.log('[AnimeUA v40][STREAMS] input='+r.slice(0,180));if(r.indexOf('animeua:debug:')===0)return cb({success:false,error:decodeURIComponent(r.slice('animeua:debug:'.length))});var o=[];if(r.indexOf('animeua:studios:')===0){var raw=decodeURIComponent(r.slice('animeua:studios:'.length)),studios=JSON.parse(raw);console.log('[AnimeUA v40][STREAMS] studios='+studios.length);for(var i=0;i<studios.length;i++)addFile(o,studios[i].file,studios[i].name)}else addFile(o,r,'AnimeUA');console.log('[AnimeUA v40][STREAMS] parsed streams='+o.length);if(!o.length)return cb({success:false,error:'AnimeUA v40 DEBUG: stage=loadStreams parsed=0 input='+r.slice(0,120)});await warmStreams(o);console.log('[AnimeUA v40][STREAMS] warm complete');cb({success:true,data:o})}catch(e){console.log('[AnimeUA v40][STREAMS FATAL] '+String(e));cb({success:false,error:'AnimeUA v40 loadStreams: '+String(e)})}}"""
+          if old2 not in s:
+              raise SystemExit('loadStreams() target not found - refusing blind patch')
+          s=s.replace(old2,new2)
+          p.write_text(s)
+          j=Path('animeua/plugin.json')
+          data=json.loads(j.read_text())
+          data['version']=40
+          j.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\\n')
+          PY
+      - name: Commit v40
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add animeua/plugin.js animeua/plugin.json
+          git commit -m "debug: instrument AnimeUA v40 playback pipeline"
+          git pull --rebase origin main
+          git push origin HEAD:main
