@@ -10,45 +10,26 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect live AnimeUA playback pipeline
+      - name: Inspect 100 Metriv playback pipeline
         shell: bash
         run: |
           set -euo pipefail
           UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'
           BASE='https://animeua.club'
-          SEARCH="$BASE/index.php?do=search&subaction=search&search_start=0&full_search=0&result_from=1&story=100%20%D0%BC%D0%B5%D1%82%D1%80%D1%96%D0%B2"
-          curl -L -sS --max-time 20 -A "$UA" -e "$BASE/" "$SEARCH" -o /tmp/search.html
-          python - <<'PY'
-          import re, html
-          s=open('/tmp/search.html',encoding='utf-8',errors='ignore').read()
-          print('SEARCH_BYTES',len(s))
-          pairs=[]
-          for m in re.finditer(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>[\s\S]{0,1000}?</a>',s,re.I):
-              block=m.group(0); text=re.sub(r'<[^>]+>',' ',block); text=re.sub(r'\s+',' ',html.unescape(text)).strip()
-              if '100' in text or 'метр' in text.lower(): pairs.append((m.group(1),text[:180]))
-          for p in pairs[:20]: print('MATCH',p)
-          urls=re.findall(r'href=["\'](https?://animeua\.club/[^"\']+\.html)["\']',s,re.I)
-          target=''
-          for u in urls:
-              if '100' in u.lower(): target=u; break
-          if not target and pairs:
-              u=pairs[0][0]; target=u if u.startswith('http') else 'https://animeua.club/'+u.lstrip('/')
-          if not target and urls: target=urls[0]
-          print('TARGET',target); open('/tmp/target','w').write(target)
-          PY
-          TARGET=$(cat /tmp/target); test -n "$TARGET"
+          TARGET='https://animeua.club/8172-100-metriv.html'
           curl -L -sS --max-time 20 -A "$UA" -e "$BASE/" "$TARGET" -o /tmp/page.html
           python - <<'PY'
-          import re, html, urllib.parse
-          s=open('/tmp/page.html',encoding='utf-8',errors='ignore').read(); target=open('/tmp/target').read().strip()
-          print('PAGE_BYTES',len(s)); tags=re.findall(r'<iframe\b[^>]*>',s,re.I); print('IFRAMES',len(tags)); out=[]
+          import re,html,urllib.parse
+          s=open('/tmp/page.html',encoding='utf-8',errors='ignore').read(); target='https://animeua.club/8172-100-metriv.html'
+          print('PAGE_BYTES',len(s)); print('PAGE_HAS_FILE',bool(re.search(r'\bfile\s*:',s)))
+          tags=re.findall(r'<iframe\b[^>]*>',s,re.I); print('IFRAMES',len(tags)); out=[]
           for i,t in enumerate(tags):
               vals=[]
               for name in ['data-src','src','data-url','data-player','data-frame','data-video']:
-                  m=re.search(r'(?:^|\s)'+re.escape(name)+r'\s*=\s*(["\'])(.*?)\1',t,re.I)
+                  m=re.search(r'(?:^|\s)'+name+r'\s*=\s*(["\'])(.*?)\1',t,re.I)
                   if m:
                       u=html.unescape(m.group(2)).replace('\\/','/'); u=urllib.parse.urljoin(target,u); vals.append((name,u))
-              print('IFRAME',i,vals); out += [u for _,u in vals if u.startswith('http')]
+              print('IFRAME',i,vals); out += [u for _,u in vals if u.startswith('http') and u!=target]
           open('/tmp/iframes','w').write('\n'.join(dict.fromkeys(out)))
           PY
           n=0
@@ -57,25 +38,25 @@ jobs:
             n=$((n+1)); echo "=== IFRAME $n $U ==="
             curl -L -sS --max-time 20 -A "$UA" -e "$TARGET" "$U" -o "/tmp/iframe$n.html" || true
             echo "BYTES $(wc -c < /tmp/iframe$n.html)"
-            python - "$n" "$U" <<'PY'
+            python - "$n" <<'PY'
           import sys,re,json,html
           n=sys.argv[1]; s=open('/tmp/iframe'+n+'.html',encoding='utf-8',errors='ignore').read()
-          print('HAS_FILE', bool(re.search(r'\bfile\s*:',s)))
+          print('HAS_FILE',bool(re.search(r'\bfile\s*:',s)))
           m=re.search(r'\bfile\s*:\s*',s)
           if not m: raise SystemExit
           p=m.end(); q=s[p:p+1]; val=''
           if q in ('"',"'",'`'):
-              i=p+1; esc=False; buf=[]
+              i=p+1; esc=False; b=[]
               while i<len(s):
                   c=s[i]
-                  if esc: buf.append(c); esc=False
-                  elif c=='\\': buf.append(c); esc=True
+                  if esc: b.append(c); esc=False
+                  elif c=='\\': b.append(c); esc=True
                   elif c==q: break
-                  else: buf.append(c)
+                  else: b.append(c)
                   i+=1
-              val=''.join(buf)
+              val=''.join(b)
           elif q=='[':
-              i=p; depth=0; quote=None; esc=False
+              i=p; dep=0; quote=None; esc=False
               while i<len(s):
                   c=s[i]
                   if quote:
@@ -84,16 +65,16 @@ jobs:
                       elif c==quote: quote=None
                   else:
                       if c in ('"',"'",'`'): quote=c
-                      elif c=='[': depth+=1
+                      elif c=='[': dep+=1
                       elif c==']':
-                          depth-=1
-                          if depth==0: i+=1; break
+                          dep-=1
+                          if dep==0: i+=1; break
                   i+=1
               val=s[p:i]
           else:
               mm=re.match(r'https?://[^\s,}]+',s[p:],re.I); val=mm.group(0) if mm else ''
           val=html.unescape(val).replace('\\/','/')
-          print('FILE_LEN',len(val),'FILE_PREFIX',repr(val[:600]))
+          print('FILE_LEN',len(val),'FILE_PREFIX',repr(val[:1000]))
           leaves=[]
           try:
               cfg=json.loads(val)
@@ -101,22 +82,29 @@ jobs:
                   if isinstance(x,list):
                       for z in x: walk(z,path)
                   elif isinstance(x,dict):
-                      title=str(x.get('title','')); np=path+[title] if x.get('folder') is not None and title else path
-                      if x.get('file') is not None: leaves.append((path,title,x['file']))
-                      if x.get('folder') is not None: walk(x['folder'],np)
+                      title=str(x.get('title','')); np=path+[title] if 'folder' in x and title else path
+                      if 'file' in x: leaves.append((path,title,x['file']))
+                      if 'folder' in x: walk(x['folder'],np)
               walk(cfg)
           except Exception as e: print('JSON_ERROR',repr(e))
-          print('LEAVES',len(leaves)); rx=re.compile(r'\[([^\]]+)\](https?://[^,\s]+)')
-          for j,(path,title,f0) in enumerate(leaves[:12]):
-              f = f0 if isinstance(f0,str) else json.dumps(f0,ensure_ascii=False)
-              f=html.unescape(f).replace('\\/','/'); hits=rx.findall(f)
-              print('LEAF',j,'TYPE',type(f0).__name__,'PATH',path,'TITLE',title,'FILE_PREFIX',repr(f[:260]),'REGEX_HITS',len(hits),hits[:4])
-              if j==0: open('/tmp/leafurl','w').write(hits[0][1] if hits else (f if f.startswith('http') else ''))
+          print('LEAVES',len(leaves))
+          for j,(path,title,f0) in enumerate(leaves[:20]):
+              f=f0 if isinstance(f0,str) else json.dumps(f0,ensure_ascii=False)
+              f=html.unescape(f).replace('\\/','/')
+              rx=re.findall(r'\[([^\]]+)\](https?://[^,\s]+)',f)
+              direct=f if f.startswith('http') else ''
+              print('LEAF',j,'TYPE',type(f0).__name__,'PATH',path,'TITLE',title,'DIRECT',bool(direct),'REGEX',len(rx),'PREFIX',repr(f[:400]))
+              if j==0: open('/tmp/stream','w').write(rx[0][1] if rx else direct)
+          if not leaves and val.startswith('http'): open('/tmp/stream','w').write(val)
           PY
           done < /tmp/iframes
-          echo '=== FIRST STREAM HTTP TEST ==='
-          if [ -s /tmp/leafurl ]; then
-            STREAM=$(cat /tmp/leafurl); echo "STREAM=$STREAM"
-            curl -L -sS --max-time 20 -A "$UA" -e "$BASE/" -D /tmp/headers "$STREAM" -o /tmp/streambody || true
-            head -20 /tmp/headers || true; echo "STREAM_BYTES $(wc -c < /tmp/streambody)"; head -c 300 /tmp/streambody || true
+          if [ -s /tmp/stream ]; then
+            STREAM=$(cat /tmp/stream); echo "=== STREAM $STREAM ==="
+            for REF in "$BASE/" "$TARGET"; do
+              echo "REFERER $REF"
+              curl -L -sS --max-time 20 -A "$UA" -e "$REF" -D /tmp/h "$STREAM" -o /tmp/b || true
+              head -15 /tmp/h || true; echo "BODY_BYTES $(wc -c < /tmp/b)"; head -c 500 /tmp/b || true; echo
+            done
+          else
+            echo 'NO_STREAM_EXTRACTED'
           fi
