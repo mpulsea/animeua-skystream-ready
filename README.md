@@ -2,7 +2,7 @@
 
 Український AnimeUA provider для SkyStream.
 
-Current plugin version: **39**.
+Current plugin version: **40**.
 
 ## Repository URL
 
