@@ -1,0 +1,54 @@
+name: Patch v37 quality support once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/patch-v37-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Patch AnimeUA v37
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          p = Path('animeua/plugin.js')
+          s = p.read_text()
+
+          old = "function add(o,u,q,source){var nq=normQuality(q,u);o.push(new StreamResult({url:dec(u),quality:nq,source:source||'AnimeUA',headers:{'Referer':manifest.baseUrl+'/','User-Agent':UA}}))}"
+          new = "function add(o,u,q,source){var nq=normQuality(q,u),label=source||'AnimeUA';if(nq==='Auto')label=label+' · Auto';else label=label+' · '+nq;o.push(new StreamResult({url:dec(u),source:label,headers:{'Referer':manifest.baseUrl+'/','User-Agent':UA}}))}"
+          if old not in s:
+              raise SystemExit('quality add() target not found')
+          s = s.replace(old, new, 1)
+          s = s.replace('skystream=36', 'skystream=37')
+          p.write_text(s)
+
+          m = Path('animeua/plugin.json')
+          data = json.loads(m.read_text())
+          if data.get('version') != 36:
+              raise SystemExit(f"expected version 36, got {data.get('version')}")
+          data['version'] = 37
+          m.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+
+          Path('.github/workflows/patch-v37-once.yml').unlink()
+          PY
+
+      - name: Commit v37
+        run: |
+          git config user.name "mpulsea"
+          git config user.email "mpulsea@gmail.com"
+          git add -A
+          git commit -m "feat: add quality-aware streams in AnimeUA v37"
+          git pull --rebase origin main
+          git push origin HEAD:main
