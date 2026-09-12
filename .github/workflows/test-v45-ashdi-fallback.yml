@@ -1,0 +1,54 @@
+name: Test AnimeUA v45 Ashdi fallback
+on:
+  push:
+    branches: [v44-release-model]
+    paths: ['.github/workflows/test-v45-ashdi-fallback.yml']
+permissions:
+  contents: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: v44-release-model
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Apply minimal fallback patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('animeua/plugin.js'); s=p.read_text(encoding='utf-8')
+          old="async function resolveAshdi(player,page,season,ep){var out=[],ad=await getAshdiFile(player,page),pf=ad.file;if(!pf)return out;if(/^https?:\\/\\//i.test(pf)){if(ep===1)addFile(out,pf,'AnimeUA',player);return out}try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a,season),studios=uniqueStudios(g.by[ep]||[]);for(var i=0;i<studios.length;i++)addFile(out,studios[i].file,studios[i].name,player)}catch(e){console.log('[AnimeUA v44][ASHDI PARSE] '+String(e))}return out}"
+          new="async function resolveAshdi(player,page,season,ep){var out=[],ad=await getAshdiFile(player,page),pf=ad.file;if(!pf)return out;if(/^https?:\\/\\//i.test(pf)){if(ep===1)addFile(out,pf,'AnimeUA',player);return out}try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a,season),list=g.by[ep]||[],studios=uniqueStudios(list);if(!studios.length){var all=groupEpisodes(a),fallback=all.by[ep]||[];studios=uniqueStudios(fallback);if(studios.length)console.log('[AnimeUA v45][ASHDI FALLBACK] season='+season+' ep='+ep+' variants='+fallback.length)}for(var i=0;i<studios.length;i++)addFile(out,studios[i].file,studios[i].name,player)}catch(e){console.log('[AnimeUA v45][ASHDI PARSE] '+String(e))}return out}"
+          if old not in s: raise SystemExit('resolveAshdi needle missing')
+          s=s.replace(old,new,1).replace('skystream=44','skystream=45').replace('[AnimeUA v44]','[AnimeUA v45]')
+          p.write_text(s,encoding='utf-8')
+          j=Path('animeua/plugin.json'); d=json.loads(j.read_text(encoding='utf-8')); d['version']=45; j.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          node --check animeua/plugin.js
+      - name: Validate current and legacy tokens
+        run: |
+          cat > /tmp/test.cjs <<'NODE'
+          const fs=require('fs'),vm=require('vm'); global.manifest={baseUrl:'https://animeua.club'};
+          for(const n of ['MultimediaItem','Episode','StreamResult']) global[n]=class{constructor(o){Object.assign(this,o)}};
+          async function net(m,u,h={},b){const r=await fetch(u,{method:m,headers:h,body:b,redirect:'follow'});return{body:await r.text(),status:r.status,statusCode:r.status}}
+          global.http_get=(u,h={})=>net('GET',u,h); global.http_post=(u,h={},b='')=>net('POST',u,h,b);
+          vm.runInThisContext(fs.readFileSync('animeua/plugin.js','utf8'));
+          const call=(f,...a)=>new Promise((res,rej)=>{let d=false;const cb=x=>{if(!d){d=true;res(x)}};try{f(...a,cb)}catch(e){rej(e)};setTimeout(()=>!d&&rej(new Error('timeout')),45000)});
+          const page='https://animeua.club/3114-mushoku-tensei-isekai-ittara-honki-dasu.html';
+          const pack=o=>'animeua:episode:'+encodeURIComponent(JSON.stringify(o));
+          async function check(tok,label){const r=await call(global.loadStreams,tok),ss=r?.data||[];console.log(label,r?.success,ss.length,r?.error||'');if(!r?.success||!ss.length)throw new Error(label+' no streams');const x=await fetch(ss[0].url,{headers:ss[0].headers||{}}),t=await x.text();console.log(label,'HTTP',x.status,'M3U8',t.startsWith('#EXTM3U'));if(!x.ok||!t.startsWith('#EXTM3U'))throw new Error(label+' bad stream')}
+          (async()=>{const l=await call(global.load,page);if(!l?.success||l.data.episodes.length!==11)throw new Error('load regression');await check(l.data.episodes[0].url,'V45 TOKEN');await check(pack({page,season:1,episode:1}),'V43 TOKEN');await check(pack({page,episode:1}),'V42 TOKEN');console.log('V45_ASHDI_FALLBACK_OK')})().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          node /tmp/test.cjs
+      - name: Commit tested source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add animeua/plugin.js animeua/plugin.json
+          git commit -m 'fix: add safe Ashdi fallback v45'
+          git push origin HEAD:v44-release-model
