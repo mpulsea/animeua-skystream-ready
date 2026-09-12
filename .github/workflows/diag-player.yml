@@ -13,42 +13,25 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - name: Inspect primary and fallback players
+      - name: Inspect page-level episode metadata
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/inspect.cjs <<'NODE'
+          cat > /tmp/page.cjs <<'NODE'
           const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1';
-          async function get(url,ref){const r=await fetch(url,{headers:{'User-Agent':UA,'Referer':ref||'https://animeua.club/','Accept':'text/html,*/*'},redirect:'follow'});return{url:r.url,status:r.status,body:await r.text()}}
-          const iframeUrls=(html,base)=>[...html.matchAll(/<iframe\b[^>]*>/ig)].flatMap(m=>{const t=m[0],out=[];for(const n of ['data-src','src','data-url','data-player','data-frame','data-video']){const q=t.match(new RegExp('(?:^|\\s)'+n+'\\s*=\\s*(["\\\'])(.*?)\\1','i'));if(q)try{out.push(new URL(q[2].replace(/&amp;/g,'&'),base).toString())}catch{}}return out}).filter((x,i,a)=>a.indexOf(x)===i&&x!==base);
-          function scripts(html,base){return [...html.matchAll(/<script\b[^>]*src\s*=\s*(["'])(.*?)\1/ig)].map(m=>{try{return new URL(m[2],base).toString()}catch{return''}}).filter(Boolean)}
-          function interesting(body){
-            const lines=[];
-            for(const re of [/file\s*:/ig,/episodes?/ig,/translation/ig,/ajax/ig,/fetch\s*\(/ig,/\.php/ig,/m3u8/ig]){
-              let m,c=0; while((m=re.exec(body))&&c<6){const a=Math.max(0,m.index-180),b=Math.min(body.length,m.index+420);lines.push(body.slice(a,b).replace(/\s+/g,' '));c++;}
-            }
-            return [...new Set(lines)].slice(0,24);
-          }
-          async function inspectPage(target,label){
-            console.log('\n###',label,target);
-            const p=await get(target,'https://animeua.club/'); console.log('PAGE',p.status,p.body.length);
-            const ifs=iframeUrls(p.body,target); console.log('IFRAMES',ifs);
-            for(const u of ifs){
-              console.log('\n-- IFRAME',u);
-              try{
-                const r=await get(u,target); console.log('STATUS',r.status,'FINAL',r.url,'BYTES',r.body.length);
-                for(const x of interesting(r.body)) console.log('SNIP',x.slice(0,900));
-                const ss=scripts(r.body,r.url); console.log('SCRIPTS',ss);
-                for(const js of ss.slice(0,8)){
-                  if(!/(uacdn|franko|ashdi|player|video)/i.test(js)) continue;
-                  try{const j=await get(js,r.url); console.log('JS',js,j.status,j.body.length); for(const x of interesting(j.body)) console.log('JS_SNIP',x.slice(0,1000));}catch(e){console.log('JS_ERR',js,String(e))}
-                }
-              }catch(e){console.log('IFRAME_ERR',u,String(e))}
-            }
+          async function get(url){const r=await fetch(url,{headers:{'User-Agent':UA,'Referer':'https://animeua.club/'},redirect:'follow'});return await r.text()}
+          async function inspect(url,label){
+            const s=await get(url); console.log('\n###',label,'BYTES',s.length);
+            const pats=[/сер(?:ія|ії|ій|іал)[^<]{0,120}/ig,/episode[^<]{0,120}/ig,/episodes[^<]{0,120}/ig,/season[^<]{0,120}/ig,/кільк[^<]{0,120}/ig,/випущено[^<]{0,120}/ig,/серій[^<]{0,120}/ig,/data-[^=]*(?:episode|season)[^=]*=["'][^"']+["']/ig];
+            const out=[]; for(const re of pats){let m,c=0;while((m=re.exec(s))&&c<40){const a=Math.max(0,m.index-180),b=Math.min(s.length,m.index+500);out.push(s.slice(a,b).replace(/\s+/g,' '));c++;}}
+            [...new Set(out)].slice(0,80).forEach(x=>console.log('SNIP',x));
+            const scripts=[...s.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/ig)].map(m=>m[1]);
+            for(const sc of scripts){if(/episode|season|сері/i.test(sc)) console.log('SCRIPT',sc.replace(/\s+/g,' ').slice(0,2500));}
           }
           (async()=>{
-            await inspectPage('https://animeua.club/8172-100-metriv.html','MOVIE');
-            await inspectPage('https://animeua.club/8375-100-divchat-iaki-duzhe-duzhe-duzhe-duzhe-duzhe-tebe-kokhaut-3.html','SERIES');
+            await inspect('https://animeua.club/8172-100-metriv.html','MOVIE');
+            await inspect('https://animeua.club/8375-100-divchat-iaki-duzhe-duzhe-duzhe-duzhe-duzhe-tebe-kokhaut-3.html','SERIES');
+            await inspect('https://animeua.club/8376-viiskova-istoriia-malenkoi-divchynky-2.html','SERIES2');
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
-          node /tmp/inspect.cjs
+          node /tmp/page.cjs
