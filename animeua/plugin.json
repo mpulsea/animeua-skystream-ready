@@ -1,10 +1,16 @@
 {
   "packageName": "com.anva.animeua",
   "name": "AnimeUA",
-  "version": 34,
+  "version": 35,
   "baseUrl": "https://animeua.club",
   "description": "AnimeUA - українське аніме для SkyStream",
-  "authors": ["AnVa / ChatGPT port"],
-  "languages": ["uk"],
-  "categories": ["Anime"]
+  "authors": [
+    "AnVa / ChatGPT port"
+  ],
+  "languages": [
+    "uk"
+  ],
+  "categories": [
+    "Anime"
+  ]
 }

@@ -53,9 +53,27 @@ function findPoster(html, pageUrl) {
 }
 
 function findPlayerIframe(html, pageUrl) {
-  const m = html.match(/<div[^>]*class=["'][^"']*video-inside[^"']*["'][^>]*>[\s\S]*?<iframe[^>]*(?:data-src|src)=["']([^"']+)["'][^>]*>/i)
-    || html.match(/<iframe[^>]*(?:data-src|src)=["']([^"']+)["'][^>]*>/i);
-  return m ? absoluteUrl(m[1], pageUrl) : '';
+  const tags = String(html || '').match(/<iframe\b[^>]*>/gi) || [];
+  const names = ['data-src', 'src', 'data-url', 'data-player', 'data-frame', 'data-video'];
+  for (const tag of tags) {
+    for (const name of names) {
+      const raw = attr(tag, name);
+      if (!raw || /^(?:about:|javascript:)/i.test(raw)) continue;
+      const u = absoluteUrl(raw, pageUrl);
+      if (u) return u;
+    }
+  }
+  const patterns = [
+    /(?:iframe|player|video|embed|src|url)\s*[:=]\s*["']([^"']+)["']/i,
+    /["']((?:https?:)?\/\/[^"']*(?:player|embed|video)[^"']*)["']/i,
+  ];
+  for (const re of patterns) {
+    const m = String(html || '').match(re);
+    if (!m) continue;
+    const u = absoluteUrl(m[1], pageUrl);
+    if (u) return u;
+  }
+  return '';
 }
 
 async function fetchAnimePage(target) {
@@ -182,7 +200,7 @@ async function relayPlayer(pageUrl) {
 
   const pageHtml = await pageResp.text();
   const iframe = findPlayerIframe(pageHtml, page.toString());
-  if (!iframe) return new Response('Iframe not found', { status: 404, headers: textHeaders() });
+  if (!iframe) return new Response(pageHtml, { status: 200, headers: textHeaders({ 'x-animeua-player-source': 'page', 'x-animeua-player-length': String(pageHtml.length) }) });
 
   let iframeUrl;
   try { iframeUrl = new URL(iframe); } catch { return new Response('Invalid iframe url', { status: 502, headers: textHeaders() }); }
@@ -205,12 +223,39 @@ async function relayPlayer(pageUrl) {
     return new Response(`Player fetch failed: ${e}`, { status: 502, headers: textHeaders({ 'x-animeua-iframe-host': iframeUrl.hostname }) });
   }
 
-  const body = await player.text();
+  let body = await player.text();
+  let finalStatus = player.status;
+  let finalHost = iframeUrl.hostname;
+  if (!/\bfile\s*:/i.test(body)) {
+    const nested = findPlayerIframe(body, iframeUrl.toString());
+    if (nested && nested !== iframeUrl.toString()) {
+      try {
+        const nestedUrl = new URL(nested);
+        if (/^https?:$/.test(nestedUrl.protocol)) {
+          const nestedResp = await fetch(nestedUrl.toString(), {
+            headers: {
+              'User-Agent': UA,
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Referer': iframeUrl.toString(),
+              'Origin': iframeUrl.origin,
+            },
+            redirect: 'follow',
+          });
+          const nestedBody = await nestedResp.text();
+          if (nestedBody) {
+            body = nestedBody;
+            finalStatus = nestedResp.status;
+            finalHost = nestedUrl.hostname;
+          }
+        }
+      } catch {}
+    }
+  }
   return new Response(body, {
-    status: player.ok ? 200 : 502,
+    status: finalStatus >= 200 && finalStatus < 400 ? 200 : 502,
     headers: textHeaders({
-      'x-animeua-player-status': String(player.status),
-      'x-animeua-iframe-host': iframeUrl.hostname,
+      'x-animeua-player-status': String(finalStatus),
+      'x-animeua-iframe-host': finalHost,
       'x-animeua-player-length': String(body.length),
     }),
   });
