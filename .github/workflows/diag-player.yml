@@ -10,53 +10,69 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch title page and player chain
+      - name: Inspect live player structure
         shell: bash
         run: |
-          set -u
+          set -euo pipefail
           PAGE='https://animeua.club/8376-viiskova-istoriia-malenkoi-divchynky-2.html'
+          PLAYER='https://ashdi.vip/serial/122?season=2'
           UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'
-          echo '=== PAGE HEADERS ==='
-          curl -L -sS -D /tmp/h1 -A "$UA" -e 'https://animeua.club/' "$PAGE" -o /tmp/page.html || true
-          sed -n '1,20p' /tmp/h1 || true
-          echo "page bytes: $(wc -c </tmp/page.html 2>/dev/null || echo 0)"
-          echo '=== PAGE PLAYER SIGNALS ==='
-          grep -Eio '<iframe[^>]*>|\bfile\s*:[^,;<]{0,240}|https?://[^"'"'"' <>]+(player|embed|video)[^"'"'"' <>]*' /tmp/page.html | head -30 || true
-
+          curl -L -sS -A "$UA" -e "$PAGE" "$PLAYER" -o /tmp/player.html
           python3 - <<'PY'
-          import re, html, urllib.parse
-          s=open('/tmp/page.html',errors='ignore').read()
-          page='https://animeua.club/8376-viiskova-istoriia-malenkoi-divchynky-2.html'
-          tags=re.findall(r'<iframe\b[^>]*>',s,re.I)
-          names=['data-src','src','data-url','data-player','data-frame','data-video']
-          out=[]
-          for tag in tags:
-            for n in names:
-              m=re.search(r'(?:^|\s)'+re.escape(n)+r'\s*=\s*(["\'])(.*?)\1',tag,re.I)
-              if m:
-                u=urllib.parse.urljoin(page,html.unescape(m.group(2)))
-                if u not in out: out.append(u)
-          print('IFRAMES', len(out))
-          for i,u in enumerate(out[:10],1): print(f'{i}: {u}')
-          open('/tmp/iframes.txt','w').write('\n'.join(out))
+          import re, json
+          s=open('/tmp/player.html',encoding='utf-8',errors='ignore').read()
+          m=re.search(r'\bfile\s*:',s)
+          print('file marker:', bool(m))
+          if not m: raise SystemExit(0)
+          i=m.end()
+          while i<len(s) and s[i].isspace(): i+=1
+          q=s[i]
+          print('first char:', repr(q))
+          if q in "'\"`":
+              i+=1; out=[]; esc=False
+              while i<len(s):
+                  c=s[i]
+                  if esc:
+                      out.append(c); esc=False; i+=1; continue
+                  if c=='\\':
+                      esc=True; out.append(c); i+=1; continue
+                  if c==q: break
+                  out.append(c); i+=1
+              raw=''.join(out)
+          elif q=='[':
+              start=i; depth=0; quote=''; esc=False
+              while i<len(s):
+                  c=s[i]
+                  if quote:
+                      if esc: esc=False
+                      elif c=='\\': esc=True
+                      elif c==quote: quote=''
+                  else:
+                      if c in "'\"`": quote=c
+                      elif c=='[': depth+=1
+                      elif c==']':
+                          depth-=1
+                          if depth==0:
+                              raw=s[start:i+1]; break
+                  i+=1
+          else:
+              raw=s[i:i+1000]
+          print('raw length:', len(raw))
+          print('raw head:', raw[:1500])
+          try:
+              data=json.loads(raw)
+              print('json type:', type(data).__name__, 'len:', len(data) if hasattr(data,'__len__') else '-')
+              def walk(x,depth=0,path='root'):
+                  if depth>4: return
+                  if isinstance(x,list):
+                      print(path,'LIST',len(x))
+                      for j,v in enumerate(x[:6]): walk(v,depth+1,f'{path}[{j}]')
+                  elif isinstance(x,dict):
+                      print(path,'DICT keys=',list(x.keys()))
+                      for k,v in list(x.items())[:8]:
+                          if isinstance(v,(list,dict)): walk(v,depth+1,f'{path}.{k}')
+                          else: print(f'{path}.{k}=',repr(v)[:300])
+              walk(data)
+          except Exception as e:
+              print('JSON ERROR:',repr(e))
           PY
-
-          n=0
-          while IFS= read -r URL && [ $n -lt 3 ]; do
-            n=$((n+1))
-            echo "=== IFRAME $n: $URL ==="
-            curl -L -sS -D "/tmp/h$n" -A "$UA" -e "$PAGE" "$URL" -o "/tmp/p$n.html" || true
-            sed -n '1,12p' "/tmp/h$n" || true
-            echo "bytes: $(wc -c < /tmp/p$n.html 2>/dev/null || echo 0)"
-            grep -Eio '\bfile\s*:[^,;<]{0,300}|<iframe[^>]*>|https?://[^"'"'"' <>]+\.m3u8[^"'"'"' <>]*' "/tmp/p$n.html" | head -30 || true
-          done < /tmp/iframes.txt
-
-          echo '=== WORKER HEALTH ==='
-          curl -L -sS -D - 'https://animeua-image-proxy.telling-fox.workers.dev/health' -o /tmp/health.txt || true
-          cat /tmp/health.txt || true
-
-          echo '=== WORKER PLAYER ==='
-          curl -L -sS -D /tmp/wh 'https://animeua-image-proxy.telling-fox.workers.dev/player?page=https%3A%2F%2Fanimeua.club%2F8376-viiskova-istoriia-malenkoi-divchynky-2.html' -o /tmp/wp.html || true
-          sed -n '1,20p' /tmp/wh || true
-          echo "worker bytes: $(wc -c </tmp/wp.html 2>/dev/null || echo 0)"
-          grep -Eio '\bfile\s*:[^,;<]{0,300}|<iframe[^>]*>|https?://[^"'"'"' <>]+\.m3u8[^"'"'"' <>]*' /tmp/wp.html | head -30 || true
