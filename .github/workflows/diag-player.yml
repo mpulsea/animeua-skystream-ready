@@ -10,65 +10,37 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - name: Validate v42 end to end
+      - name: Inspect multi-season mappings
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/harness.cjs <<'NODE'
-          const fs=require('fs'),vm=require('vm');
-          global.manifest={baseUrl:'https://animeua.club'};
-          for(const n of ['MultimediaItem','Episode','StreamResult']) global[n]=class {constructor(o){Object.assign(this,o)}};
-          let blockAshdi=false;
-          async function network(method,url,headers={},body){
-            if(blockAshdi && /ashdi\.vip/i.test(url)) throw new Error('TEST_BLOCKED_ASHDI');
-            const r=await fetch(url,{method,headers,body,redirect:'follow'});
-            return {body:await r.text(),status:r.status,statusCode:r.status};
+          cat > /tmp/seasons.cjs <<'NODE'
+          const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1';
+          async function get(url,ref='https://animeua.club/'){
+            const r=await fetch(url,{headers:{'User-Agent':UA,'Referer':ref},redirect:'follow'});
+            return {status:r.status,url:r.url,body:await r.text()};
           }
-          global.http_get=(url,headers={})=>network('GET',url,headers);
-          global.http_post=(url,headers={},body='')=>network('POST',url,headers,body);
-          vm.runInThisContext(fs.readFileSync('animeua/plugin.js','utf8'),{filename:'plugin.js'});
-          const call=(fn,...args)=>new Promise((resolve,reject)=>{let done=false;const cb=x=>{if(!done){done=true;resolve(x)}};try{fn(...args,cb)}catch(e){reject(e)};setTimeout(()=>{if(!done)reject(new Error('timeout'))},40000)});
-          async function checkStream(st,label){
-            if(!st||!/^https?:\/\//i.test(st.url)) throw new Error(label+' invalid stream '+JSON.stringify(st));
-            const r=await fetch(st.url,{headers:st.headers||{},redirect:'follow'}); const body=await r.text();
-            console.log(label,'HTTP',r.status,'M3U8',body.startsWith('#EXTM3U'),'SOURCE',st.source,'URL',st.url.slice(0,180));
-            if(!r.ok||!body.startsWith('#EXTM3U')) throw new Error(label+' unhealthy stream');
-          }
-          async function verify(target,label,expectedMin,expectedExact,withAshdiBlocked){
-            console.log('\n===',label,'==='); blockAshdi=!!withAshdiBlocked;
-            const a=await call(global.load,target); const b=await call(global.load,target);
-            if(!a||!a.success||!b||!b.success) throw new Error(label+' load failure');
-            const ea=a.data.episodes||[], eb=b.data.episodes||[];
-            console.log('LOAD episodes',ea.length,'blockedAshdi',blockAshdi);
-            if(ea.length<expectedMin) throw new Error(label+' too few episodes '+ea.length);
-            if(expectedExact!=null&&ea.length!==expectedExact) throw new Error(label+' expected '+expectedExact+' episodes got '+ea.length);
-            if(ea.length!==eb.length) throw new Error(label+' unstable episode count');
-            for(let i=0;i<ea.length;i++){
-              if(!String(ea[i].url).startsWith('animeua:episode:')) throw new Error(label+' nonstable token '+ea[i].url);
-              if(ea[i].url!==eb[i].url) throw new Error(label+' token changed between loads');
-              if(/ashdi\.vip|uacdn\.online|\.m3u8/i.test(ea[i].url)) throw new Error(label+' leaked provider URL into episode token');
+          function attr(tag,n){const m=String(tag||'').match(new RegExp('(?:^|\\s)'+n+'\\s*=\\s*(["\\\'])(.*?)\\1','i'));return m?m[2]:''}
+          function iframes(s,base){const out=[];for(const tag of (s.match(/<iframe\b[^>]*>/ig)||[])){for(const n of ['data-src','src']){const raw=attr(tag,n);if(!raw)continue;try{const u=new URL(raw.replace(/&amp;/g,'&'),base).toString();if(!out.includes(u))out.push(u)}catch{}}}return out;}
+          function payload(s){const m=String(s||'').match(/window\.__PLAYER_PAYLOAD__\s*=\s*(\{[\s\S]*?\});/);if(!m)return null;try{return JSON.parse(m[1])}catch{return null}}
+          function fileValue(s){const m=String(s||'').match(/\bfile\s*:\s*(['"])([\s\S]*?)\1\s*[,}]/);return m?m[2]:''}
+          async function inspect(url,label){
+            const p=await get(url); console.log('\n###',label,url,'PAGE',p.status,p.body.length);
+            const h=p.body.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i); console.log('H1',h&&h[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+            const ps=iframes(p.body,url).filter(u=>/ashdi\.vip|uacdn\.online/i.test(u)); console.log('PLAYERS',ps);
+            for(const u of ps){const r=await get(u,url);console.log('\nPLAYER',u,'STATUS',r.status,'BYTES',r.body.length);
+              const x=payload(r.body); if(x){console.log('UACDN',{id:x.id,is_serial:x.is_serial,season:x.season,episode:x.episode,seasons:x.seasons,seasons_episodes:x.seasons_episodes,translate:x.translate,translateTitle:x.translateTitle,translations:x.translations});continue;}
+              const f=fileValue(r.body); console.log('ASHDI_FILE_HEAD',f.slice(0,2500));
             }
-            const picks=[ea[0]]; if(ea.length>1)picks.push(ea[ea.length-1]);
-            for(const ep of picks){
-              for(let pass=1;pass<=2;pass++){
-                const res=await call(global.loadStreams,ep.url), streams=res&&res.data||[];
-                console.log('EP',ep.episode,'PASS',pass,'OK',res&&res.success,'STREAMS',streams.length,'ERROR',res&&res.error);
-                if(!res||!res.success||!streams.length) throw new Error(label+' no streams ep '+ep.episode+' '+JSON.stringify(res));
-                if(streams.some(s=>/субтит|\bsub\b/i.test(String(s.source||'')))) throw new Error(label+' subtitle stream leaked');
-                await checkStream(streams[0],label+' E'+ep.episode+' P'+pass);
-              }
-            }
-            blockAshdi=false;
           }
           (async()=>{
-            await verify('https://animeua.club/8172-100-metriv.html','MOVIE UACDN WITHOUT ASHDI',1,1,true);
-            await verify('https://animeua.club/8376-viiskova-istoriia-malenkoi-divchynky-2.html','SERIES UACDN WITHOUT ASHDI',13,13,true);
-            await verify('https://animeua.club/8375-100-divchat-iaki-duzhe-duzhe-duzhe-duzhe-duzhe-tebe-kokhaut-3.html','SERIES ASHDI',10,10,false);
-            console.log('\nV42_DIAG_OK');
-          })().catch(e=>{console.error('V42_DIAG_FAIL',e);process.exit(1)});
+            await inspect('https://animeua.club/3114-mushoku-tensei-isekai-ittara-honki-dasu.html','MUSHOKU PAGE 1');
+            await inspect('https://animeua.club/2218-mushoku-tensei-isekai-ittara-honki-dasu-2.html','MUSHOKU PAGE 2');
+            await inspect('https://animeua.club/8363-reinkarnaciia-bezrobitnogo-istoriia-pro-prygody-v-inshomu-sviti-3.html','MUSHOKU PAGE 3');
+            await inspect('https://animeua.club/7047-haikyuu.html','HAIKYUU MULTI');
+          })().catch(e=>{console.error('SEASON_DIAG_FAIL',e);process.exit(1)});
           NODE
-          node /tmp/harness.cjs
+          node /tmp/seasons.cjs
