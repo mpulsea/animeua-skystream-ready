@@ -1,0 +1,75 @@
+name: Test AnimeUA v46 page player first
+
+on:
+  push:
+    branches: [v46-page-player-first]
+    paths:
+      - '.github/workflows/test-v46-page-player-first.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: v46-page-player-first
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Apply minimal v46 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('animeua/plugin.js'); s=p.read_text(encoding='utf-8')
+          s=s.replace('skystream=45','skystream=46')
+          needle="async function resolveAshdi(player,page,season,ep){var out=[],ad=await getAshdiFile(player,page),pf=ad.file;if(!pf)return out;if(/^https?:\\/\\//i.test(pf)){if(ep===1)addFile(out,pf,'AnimeUA',player);return out}try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a,season),list=g.by[ep]||[],studios=uniqueStudios(list);if(!studios.length){var all=groupEpisodes(a),fallback=all.by[ep]||[];studios=uniqueStudios(fallback);if(studios.length)console.log('[AnimeUA v45][ASHDI FALLBACK] season='+season+' ep='+ep+' variants='+fallback.length)}for(var i=0;i<studios.length;i++)addFile(out,studios[i].file,studios[i].name,player)}catch(e){console.log('[AnimeUA v45][ASHDI PARSE] '+String(e))}return out}\n"
+          if needle not in s: raise SystemExit('resolveAshdi needle missing')
+          legacy="async function resolveAshdiPage(player,page,ep){var out=[],ad=await getAshdiFile(player,page),pf=ad.file;if(!pf)return out;if(/^https?:\\/\\//i.test(pf)){if(ep===1)addFile(out,pf,'AnimeUA',player);return out}try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a),studios=uniqueStudios(g.by[ep]||[]);for(var i=0;i<studios.length;i++)addFile(out,studios[i].file,studios[i].name,player)}catch(e){console.log('[AnimeUA v46][ASHDI PAGE] '+String(e))}return out}\n"
+          s=s.replace(needle,needle+legacy,1)
+          start=s.index('async function loadStreams(url,cb)')
+          end=s.index('\nglobalThis.getHome=',start)
+          new="""async function loadStreams(url,cb){try{var token=String(url||'').trim();if(token.indexOf('animeua:episode:')!==0){var direct=[];addFile(direct,token,'AnimeUA',manifest.baseUrl+'/');return direct.length?cb({success:true,data:direct}):cb({success:false,error:'AnimeUA v46: невідомий формат епізоду.'})}var info=unpackEpisode(token);if(!info||!info.page)return cb({success:false,error:'AnimeUA v46: пошкоджений токен епізоду.'});var displayEp=intOr(info.episode,1),providerEp=info.providerEpisode!=null?intOr(info.providerEpisode,displayEp):displayEp,s=await html(info.page);if(!s)return cb({success:false,error:'AnimeUA v46: сторінка недоступна.'});var urls=iframeUrls(s,info.page).filter(usefulPlayer),hint=playerSeasonHint(urls),providerSeason=info.providerSeason!=null?intOr(info.providerSeason,hint||1):(info.season!=null?intOr(info.season,hint||1):(hint||1)),o=[];if(hint!=null){for(var a=0;a<urls.length&&!o.length;a++)if(ashdiPlayer(urls[a]))o=await resolveAshdiPage(urls[a],info.page,providerEp);for(var b=0;b<urls.length&&!o.length;b++)if(uacdnPlayer(urls[b]))o=await resolveUacdn(urls[b],info.page,providerSeason,providerEp)}else{for(var i=0;i<urls.length&&!o.length;i++)if(uacdnPlayer(urls[i]))o=await resolveUacdn(urls[i],info.page,providerSeason,providerEp);for(var j=0;j<urls.length&&!o.length;j++)if(ashdiPlayer(urls[j]))o=await resolveAshdi(urls[j],info.page,providerSeason,providerEp)}console.log('[AnimeUA v46][STREAMS] displayEp='+displayEp+' hint='+(hint==null?'all':hint)+' providerSeason='+providerSeason+' providerEp='+providerEp+' players='+urls.length+' streams='+o.length);if(!o.length)return cb({success:false,error:'AnimeUA v46: свіжі відеопотоки не знайдено.'});cb({success:true,data:o})}catch(e){console.log('[AnimeUA v46][STREAMS FATAL] '+String(e));cb({success:false,error:'AnimeUA v46 loadStreams: '+String(e)})}}"""
+          s=s[:start]+new+s[end:]
+          s=s.replace('[AnimeUA v45]','[AnimeUA v46]')
+          p.write_text(s,encoding='utf-8')
+          j=Path('animeua/plugin.json'); d=json.loads(j.read_text(encoding='utf-8')); d['version']=46; j.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          node --check animeua/plugin.js
+      - name: Validate live playback
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/test.cjs <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          global.manifest={baseUrl:'https://animeua.club'};
+          for(const n of ['MultimediaItem','Episode','StreamResult']) global[n]=class {constructor(o){Object.assign(this,o)}};
+          async function network(method,url,headers={},body){const r=await fetch(url,{method,headers,body,redirect:'follow'});return {body:await r.text(),status:r.status,statusCode:r.status}}
+          global.http_get=(u,h={})=>network('GET',u,h); global.http_post=(u,h={},b='')=>network('POST',u,h,b);
+          vm.runInThisContext(fs.readFileSync('animeua/plugin.js','utf8'));
+          const call=(fn,...args)=>new Promise((res,rej)=>{let done=false;try{fn(...args,x=>{if(!done){done=true;res(x)}})}catch(e){rej(e)};setTimeout(()=>{if(!done)rej(new Error('timeout'))},45000)});
+          async function ok(url,label,expected){const x=await call(global.load,url);if(!x?.success)throw new Error(label+' load');const e=x.data.episodes||[];console.log(label,'episodes',e.length,'seasons',[...new Set(e.map(z=>z.season))]);if(expected&&e.length!==expected)throw new Error(label+' count');for(const ep of [e[0],e[e.length-1]]){const r=await call(global.loadStreams,ep.url);if(!r?.success||!r.data?.length)throw new Error(label+' no streams '+JSON.stringify(r));const st=r.data[0],q=await fetch(st.url,{headers:st.headers||{},redirect:'follow'}),b=await q.text();console.log(label,'E'+ep.episode,'HTTP',q.status,'M3U8',b.startsWith('#EXTM3U'),'SRC',st.source);if(!q.ok||!b.startsWith('#EXTM3U'))throw new Error(label+' bad stream')}}
+          (async()=>{
+            await ok('https://animeua.club/3114-mushoku-tensei-isekai-ittara-honki-dasu.html','MUSHOKU R1',11);
+            await ok('https://animeua.club/2218-mushoku-tensei-isekai-ittara-honki-dasu-2.html','MUSHOKU R2',13);
+            await ok('https://animeua.club/8363-reinkarnaciia-bezrobitnogo-istoriia-pro-prygody-v-inshomu-sviti-3.html','MUSHOKU R3');
+            const h=await call(global.load,'https://animeua.club/7047-haikyuu.html');if(!h?.success)throw new Error('Haikyuu load');const hs=[...new Set((h.data.episodes||[]).map(e=>Number(e.season)))].sort();console.log('HAIKYUU seasons',hs);if(hs.join(',')!=='1,2,3,4')throw new Error('Haikyuu seasons');
+            console.log('V46_PAGE_PLAYER_FIRST_OK');
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          node /tmp/test.cjs
+      - name: Commit tested v46 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add animeua/plugin.js animeua/plugin.json
+          git commit -m 'fix: trust page-scoped Ashdi player for playback v46'
+          git push origin HEAD:v46-page-player-first
