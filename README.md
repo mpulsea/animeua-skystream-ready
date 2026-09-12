@@ -2,7 +2,7 @@
 
 Український AnimeUA provider для SkyStream.
 
-Current plugin version: **38**.
+Current plugin version: **39**.
 
 ## Repository URL
 
@@ -11,7 +11,7 @@ Current plugin version: **38**.
 ## Structure
 
 - `animeua/` - provider source and manifest
-- `proxy/` - player relay source
+- `proxy/` - legacy relay source
 - `dist/` - generated SkyStream package and plugin list
 - `.github/workflows/build.yml` - repository build/deploy workflow
 
