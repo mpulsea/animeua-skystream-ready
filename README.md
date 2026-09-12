@@ -2,9 +2,9 @@
 
 Український AnimeUA provider для SkyStream.
 
-Current plugin version: **42**.
+Current plugin version: **47**.
 
-v42 keeps stable episode links and resolves fresh video streams only at playback time. It uses UACDN first when available and falls back to Ashdi without depending on the old temporary Worker.
+v47 keeps separate AnimeUA release cards isolated, preserves the stable playback path, and adds versioned detail URLs so SkyStream cannot reuse stale episode layouts from older broken builds.
 
 ## Repository URL
 
