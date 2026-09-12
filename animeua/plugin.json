@@ -1,7 +1,7 @@
 {
   "packageName": "com.anva.animeua",
   "name": "AnimeUA",
-  "version": 44,
+  "version": 45,
   "baseUrl": "https://animeua.club",
   "description": "AnimeUA - українське аніме для SkyStream",
   "authors": [
@@ -14,4 +14,3 @@
     "Anime"
   ]
 }
-
