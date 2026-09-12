@@ -12,6 +12,8 @@ on:
       - 'r.json'
       - 'r22.json'
       - '.github/workflows/diag-player.yml'
+      - '.github/workflows/patch-v40-debug.yml'
+      - '.github/workflows/patch-v41.yml'
   workflow_dispatch:
 
 permissions:
