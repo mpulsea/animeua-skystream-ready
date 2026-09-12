@@ -1,20 +1,16 @@
 # AnimeUA for SkyStream
 
-Експериментальний порт AnimeUA з Sora-модуля на SkyStream.
+Український AnimeUA provider для SkyStream.
 
-## Що має працювати
+## Repository URL
 
-- окремий Provider `AnimeUA`
-- головний каталог AnimeUA
-- пошук
-- сторінка тайтлу
-- серії
-- HLS/прямі відеопотоки
+`https://raw.githubusercontent.com/mpulsea/animeua-skystream-ready/main/repo.json`
 
+## Structure
 
-Після успішного Action:
+- `animeua/` - provider source and manifest
+- `proxy/` - player relay source
+- `dist/` - generated SkyStream package and plugin list
+- `.github/workflows/build.yml` - repository build/deploy workflow
 
-`https://raw.githubusercontent.com/mpulsea/animeua-skystream/main/repo.json`
-
-
-Порт зроблений на основі публічного AnimeUA Sora-модуля waruhachi та актуальної SkyStream Gen 2 plugin API.
+`repo-v4.json` і `dist/plugins-v4.json` залишені лише для сумісності з уже підключеними пристроями. Нові підключення повинні використовувати `repo.json`.

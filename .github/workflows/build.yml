@@ -1,13 +1,11 @@
-name: Build and Deploy Repository
+name: Build AnimeUA Repository
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths-ignore:
       - 'dist/**'
       - 'repo.json'
-      - 'repo-v2.json'
-      - 'repo-v3.json'
       - 'repo-v4.json'
   workflow_dispatch:
 
@@ -31,30 +29,30 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Deploy SkyStream repository
+      - name: Build repository
         run: |
           npm install -g skystream-cli
           skystream deploy -u https://raw.githubusercontent.com/${{ github.repository }}/main
 
           VERSION=$(node -p "require('./animeua/plugin.json').version")
-          VERSIONED_PACKAGE="dist/com.anva.animeua-v${VERSION}.sky"
-          cp dist/com.anva.animeua.sky "$VERSIONED_PACKAGE"
 
-          cp dist/plugins.json dist/plugins-v2.json
-          cp dist/plugins.json dist/plugins-v3.json
-          cp dist/plugins.json dist/plugins-v4.json
+          find dist -maxdepth 1 -type f -name 'com.anva.animeua-v*.sky' -delete
+          rm -f dist/plugins-v2.json dist/plugins-v3.json dist/plugins-v22-direct.json
+
+          cp dist/com.anva.animeua.sky "dist/com.anva.animeua-v${VERSION}.sky"
 
           node - <<'NODE'
           const fs = require('fs');
           const version = require('./animeua/plugin.json').version;
           const packageUrl = `https://raw.githubusercontent.com/${process.env.GITHUB_REPOSITORY}/main/dist/com.anva.animeua-v${version}.sky`;
-          for (const file of ['dist/plugins.json', 'dist/plugins-v2.json', 'dist/plugins-v3.json', 'dist/plugins-v4.json']) {
-            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-            for (const plugin of data) {
-              if (plugin.packageName === 'com.anva.animeua') plugin.url = packageUrl;
-            }
-            fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
+          const data = JSON.parse(fs.readFileSync('dist/plugins.json', 'utf8'));
+          for (const plugin of data) {
+            if (plugin.packageName === 'com.anva.animeua') plugin.url = packageUrl;
           }
+          const json = JSON.stringify(data, null, 2) + '\n';
+          fs.writeFileSync('dist/plugins.json', json);
+          // Compatibility for devices that already added the old repository URL.
+          fs.writeFileSync('dist/plugins-v4.json', json);
           NODE
 
       - name: Commit generated files
@@ -66,6 +64,6 @@ jobs:
             echo "No generated changes"
             exit 0
           fi
-          git commit -m "chore: deploy SkyStream repository [skip ci]"
+          git commit -m "chore: build AnimeUA repository [skip ci]"
           git pull --rebase origin main
           git push origin HEAD:main

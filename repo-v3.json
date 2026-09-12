@@ -1,9 +1,0 @@
-{
-  "name": "AnimeUA v3",
-  "packageName": "com.anva.animeua.repository.v3",
-  "description": "Український AnimeUA provider для SkyStream",
-  "manifestVersion": 1,
-  "pluginLists": [
-    "https://raw.githubusercontent.com/mpulsea/animeua-skystream-ready/main/dist/plugins-v3.json"
-  ]
-}
