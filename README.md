@@ -4,6 +4,8 @@
 
 Current plugin version: **41**.
 
+v41 resolves video streams fresh at playback time so temporary player URLs are not cached in episode links.
+
 ## Repository URL
 
 `https://raw.githubusercontent.com/mpulsea/animeua-skystream-ready/main/repo.json`
