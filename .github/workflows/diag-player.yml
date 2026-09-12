@@ -10,58 +10,45 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - name: Validate v41 movie and series playback
+      - name: Inspect primary and fallback players
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/harness.cjs <<'NODE'
-          const fs=require('fs'),vm=require('vm');
-          global.manifest={baseUrl:'https://animeua.club'};
-          for(const n of ['MultimediaItem','Episode','StreamResult']) global[n]=class {constructor(o){Object.assign(this,o)}};
-          global.http_get=async(url,headers={})=>{const r=await fetch(url,{headers,redirect:'follow'});return{body:await r.text(),status:r.status,statusCode:r.status}};
-          vm.runInThisContext(fs.readFileSync('animeua/plugin.js','utf8'),{filename:'plugin.js'});
-          const call=(fn,...args)=>new Promise((resolve,reject)=>{let done=false;const cb=x=>{if(!done){done=true;resolve(x)}};try{fn(...args,cb)}catch(e){reject(e)};setTimeout(()=>{if(!done)reject(new Error('timeout'))},30000)});
-          async function verify(target,label){
-            console.log('\n===',label,target,'===');
-            const loaded=await call(global.load,target);
-            if(!loaded||!loaded.success) throw new Error(label+' load failed '+JSON.stringify(loaded));
-            const item=loaded.data,eps=item&&item.episodes||[];
-            console.log('TITLE',item&&item.title,'EPISODES',eps.length);
-            if(!eps.length) throw new Error(label+' has no episodes');
-            for(const e of eps){
-              if(!String(e.url).startsWith('animeua:episode:')) throw new Error(label+' unstable episode token '+e.url);
-              if(/ashdi\.vip|\.m3u8/i.test(String(e.url))) throw new Error(label+' leaked ephemeral URL into episode token');
+          cat > /tmp/inspect.cjs <<'NODE'
+          const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1';
+          async function get(url,ref){const r=await fetch(url,{headers:{'User-Agent':UA,'Referer':ref||'https://animeua.club/','Accept':'text/html,*/*'},redirect:'follow'});return{url:r.url,status:r.status,body:await r.text()}}
+          const iframeUrls=(html,base)=>[...html.matchAll(/<iframe\b[^>]*>/ig)].flatMap(m=>{const t=m[0],out=[];for(const n of ['data-src','src','data-url','data-player','data-frame','data-video']){const q=t.match(new RegExp('(?:^|\\s)'+n+'\\s*=\\s*(["\\\'])(.*?)\\1','i'));if(q)try{out.push(new URL(q[2].replace(/&amp;/g,'&'),base).toString())}catch{}}return out}).filter((x,i,a)=>a.indexOf(x)===i&&x!==base);
+          function scripts(html,base){return [...html.matchAll(/<script\b[^>]*src\s*=\s*(["'])(.*?)\1/ig)].map(m=>{try{return new URL(m[2],base).toString()}catch{return''}}).filter(Boolean)}
+          function interesting(body){
+            const lines=[];
+            for(const re of [/file\s*:/ig,/episodes?/ig,/translation/ig,/ajax/ig,/fetch\s*\(/ig,/\.php/ig,/m3u8/ig]){
+              let m,c=0; while((m=re.exec(body))&&c<6){const a=Math.max(0,m.index-180),b=Math.min(body.length,m.index+420);lines.push(body.slice(a,b).replace(/\s+/g,' '));c++;}
             }
-            const picks=[eps[0]];
-            if(eps.length>1) picks.push(eps[eps.length-1]);
-            for(const ep of picks){
-              console.log('TOKEN',ep.episode,String(ep.url).slice(0,220));
-              let firstUrl='';
-              for(let pass=1;pass<=2;pass++){
-                const result=await call(global.loadStreams,ep.url);
-                const streams=result&&result.data||[];
-                console.log('PASS',pass,'EP',ep.episode,'SUCCESS',result&&result.success,'COUNT',streams.length,'ERROR',result&&result.error);
-                if(!result||!result.success||!streams.length) throw new Error(label+' ep '+ep.episode+' pass '+pass+' no streams '+JSON.stringify(result));
-                const st=streams[0];
-                console.log('STREAM',pass,st.source,st.url);
-                if(!/^https?:\/\//i.test(st.url)) throw new Error('invalid stream url');
-                if(pass===1) firstUrl=st.url;
-                const r=await fetch(st.url,{headers:st.headers||{},redirect:'follow'});
-                const body=await r.text();
-                console.log('HTTP',r.status,'M3U8',body.startsWith('#EXTM3U'),'BYTES',body.length);
-                if(!r.ok||!body.startsWith('#EXTM3U')) throw new Error(label+' stream unhealthy');
-              }
-              console.log('FRESH_RESOLVE_OK',ep.episode,'first=',firstUrl);
+            return [...new Set(lines)].slice(0,24);
+          }
+          async function inspectPage(target,label){
+            console.log('\n###',label,target);
+            const p=await get(target,'https://animeua.club/'); console.log('PAGE',p.status,p.body.length);
+            const ifs=iframeUrls(p.body,target); console.log('IFRAMES',ifs);
+            for(const u of ifs){
+              console.log('\n-- IFRAME',u);
+              try{
+                const r=await get(u,target); console.log('STATUS',r.status,'FINAL',r.url,'BYTES',r.body.length);
+                for(const x of interesting(r.body)) console.log('SNIP',x.slice(0,900));
+                const ss=scripts(r.body,r.url); console.log('SCRIPTS',ss);
+                for(const js of ss.slice(0,8)){
+                  if(!/(uacdn|franko|ashdi|player|video)/i.test(js)) continue;
+                  try{const j=await get(js,r.url); console.log('JS',js,j.status,j.body.length); for(const x of interesting(j.body)) console.log('JS_SNIP',x.slice(0,1000));}catch(e){console.log('JS_ERR',js,String(e))}
+                }
+              }catch(e){console.log('IFRAME_ERR',u,String(e))}
             }
           }
           (async()=>{
-            await verify('https://animeua.club/8172-100-metriv.html','MOVIE');
-            await verify('https://animeua.club/8375-100-divchat-iaki-duzhe-duzhe-duzhe-duzhe-duzhe-tebe-kokhaut-3.html','SERIES');
-            console.log('\nV41_DIAG_OK');
-          })().catch(e=>{console.error('V41_DIAG_FAIL',e);process.exit(1)});
+            await inspectPage('https://animeua.club/8172-100-metriv.html','MOVIE');
+            await inspectPage('https://animeua.club/8375-100-divchat-iaki-duzhe-duzhe-duzhe-duzhe-duzhe-tebe-kokhaut-3.html','SERIES');
+          })().catch(e=>{console.error(e);process.exit(1)});
           NODE
-          node /tmp/harness.cjs
+          node /tmp/inspect.cjs
