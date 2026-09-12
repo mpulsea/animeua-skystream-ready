@@ -2,7 +2,7 @@
 
 Український AnimeUA provider для SkyStream.
 
-Current plugin version: **41**.
+Current plugin version: **42**.
 
 v41 resolves video streams fresh at playback time so temporary player URLs are not cached in episode links.
 
