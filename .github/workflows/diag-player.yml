@@ -1,46 +1,53 @@
 name: Diagnose AnimeUA player
-
 on:
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/diag-player.yml'
-
+    paths: ['.github/workflows/diag-player.yml']
+permissions:
+  contents: write
 jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: v44-release-model
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - name: Inspect multi-season mappings
-        shell: bash
+      - name: Apply minimal v45 Ashdi fallback
         run: |
-          set -euo pipefail
-          cat > /tmp/seasons.cjs <<'NODE'
-          const UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1';
-          async function get(url,ref='https://animeua.club/'){
-            const r=await fetch(url,{headers:{'User-Agent':UA,'Referer':ref},redirect:'follow'});
-            return {status:r.status,url:r.url,body:await r.text()};
-          }
-          function attr(tag,n){const m=String(tag||'').match(new RegExp('(?:^|\\s)'+n+'\\s*=\\s*(["\\\'])(.*?)\\1','i'));return m?m[2]:''}
-          function iframes(s,base){const out=[];for(const tag of (s.match(/<iframe\b[^>]*>/ig)||[])){for(const n of ['data-src','src']){const raw=attr(tag,n);if(!raw)continue;try{const u=new URL(raw.replace(/&amp;/g,'&'),base).toString();if(!out.includes(u))out.push(u)}catch{}}}return out;}
-          function payload(s){const m=String(s||'').match(/window\.__PLAYER_PAYLOAD__\s*=\s*(\{[\s\S]*?\});/);if(!m)return null;try{return JSON.parse(m[1])}catch{return null}}
-          function fileValue(s){const m=String(s||'').match(/\bfile\s*:\s*(['"])([\s\S]*?)\1\s*[,}]/);return m?m[2]:''}
-          async function inspect(url,label){
-            const p=await get(url); console.log('\n###',label,url,'PAGE',p.status,p.body.length);
-            const h=p.body.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i); console.log('H1',h&&h[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
-            const ps=iframes(p.body,url).filter(u=>/ashdi\.vip|uacdn\.online/i.test(u)); console.log('PLAYERS',ps);
-            for(const u of ps){const r=await get(u,url);console.log('\nPLAYER',u,'STATUS',r.status,'BYTES',r.body.length);
-              const x=payload(r.body); if(x){console.log('UACDN',{id:x.id,is_serial:x.is_serial,season:x.season,episode:x.episode,seasons:x.seasons,seasons_episodes:x.seasons_episodes,translate:x.translate,translateTitle:x.translateTitle,translations:x.translations});continue;}
-              const f=fileValue(r.body); console.log('ASHDI_FILE_HEAD',f.slice(0,2500));
-            }
-          }
-          (async()=>{
-            await inspect('https://animeua.club/3114-mushoku-tensei-isekai-ittara-honki-dasu.html','MUSHOKU PAGE 1');
-            await inspect('https://animeua.club/2218-mushoku-tensei-isekai-ittara-honki-dasu-2.html','MUSHOKU PAGE 2');
-            await inspect('https://animeua.club/8363-reinkarnaciia-bezrobitnogo-istoriia-pro-prygody-v-inshomu-sviti-3.html','MUSHOKU PAGE 3');
-            await inspect('https://animeua.club/7047-haikyuu.html','HAIKYUU MULTI');
-          })().catch(e=>{console.error('SEASON_DIAG_FAIL',e);process.exit(1)});
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('animeua/plugin.js'); s=p.read_text(encoding='utf-8')
+          old="async function resolveAshdi(player,page,season,ep){var out=[],ad=await getAshdiFile(player,page),pf=ad.file;if(!pf)return out;if(/^https?:\\/\\//i.test(pf)){if(ep===1)addFile(out,pf,'AnimeUA',player);return out}try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a,season),studios=uniqueStudios(g.by[ep]||[]);for(var i=0;i<studios.length;i++)addFile(out,studios[i].file,studios[i].name,player)}catch(e){console.log('[AnimeUA v44][ASHDI PARSE] '+String(e))}return out}"
+          new="async function resolveAshdi(player,page,season,ep){var out=[],ad=await getAshdiFile(player,page),pf=ad.file;if(!pf)return out;if(/^https?:\\/\\//i.test(pf)){if(ep===1)addFile(out,pf,'AnimeUA',player);return out}try{var a=[],cfg=JSON.parse(pf);flat(cfg,a,[],1);var g=groupEpisodes(a,season),list=g.by[ep]||[],studios=uniqueStudios(list);if(!studios.length){var all=groupEpisodes(a),fallback=all.by[ep]||[];studios=uniqueStudios(fallback);if(studios.length)console.log('[AnimeUA v45][ASHDI FALLBACK] season='+season+' ep='+ep+' variants='+fallback.length)}for(var i=0;i<studios.length;i++)addFile(out,studios[i].file,studios[i].name,player)}catch(e){console.log('[AnimeUA v45][ASHDI PARSE] '+String(e))}return out}"
+          if old not in s: raise SystemExit('resolveAshdi needle missing')
+          s=s.replace(old,new,1).replace('skystream=44','skystream=45').replace('[AnimeUA v44]','[AnimeUA v45]')
+          p.write_text(s,encoding='utf-8')
+          j=Path('animeua/plugin.json'); d=json.loads(j.read_text(encoding='utf-8')); d['version']=45; j.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          node --check animeua/plugin.js
+      - name: Validate Mushoku S1 and legacy tokens
+        run: |
+          cat > /tmp/test.cjs <<'NODE'
+          const fs=require('fs'),vm=require('vm'); global.manifest={baseUrl:'https://animeua.club'};
+          for(const n of ['MultimediaItem','Episode','StreamResult']) global[n]=class{constructor(o){Object.assign(this,o)}};
+          async function net(m,u,h={},b){const r=await fetch(u,{method:m,headers:h,body:b,redirect:'follow'});return{body:await r.text(),status:r.status,statusCode:r.status}}
+          global.http_get=(u,h={})=>net('GET',u,h); global.http_post=(u,h={},b='')=>net('POST',u,h,b);
+          vm.runInThisContext(fs.readFileSync('animeua/plugin.js','utf8'));
+          const call=(f,...a)=>new Promise((res,rej)=>{let d=false;const cb=x=>{if(!d){d=true;res(x)}};try{f(...a,cb)}catch(e){rej(e)};setTimeout(()=>!d&&rej(new Error('timeout')),45000)});
+          const page='https://animeua.club/3114-mushoku-tensei-isekai-ittara-honki-dasu.html'; const pack=o=>'animeua:episode:'+encodeURIComponent(JSON.stringify(o));
+          async function check(tok,label){const r=await call(global.loadStreams,tok),ss=r?.data||[];console.log(label,'streams',ss.length,r?.error||'');if(!r?.success||!ss.length)throw new Error(label+' no streams');const x=await fetch(ss[0].url,{headers:ss[0].headers||{}}),t=await x.text();if(!x.ok||!t.startsWith('#EXTM3U'))throw new Error(label+' bad m3u8');}
+          (async()=>{const l=await call(global.load,page);if(!l?.success||l.data.episodes.length!==11)throw new Error('S1 load/count');await check(l.data.episodes[0].url,'V45');await check(pack({page,season:1,episode:1}),'V43');await check(pack({page,episode:1}),'V42');console.log('V45_DEVICE_CASE_OK')})().catch(e=>{console.error(e);process.exit(1)});
           NODE
-          node /tmp/seasons.cjs
+          node /tmp/test.cjs
+      - name: Commit tested v45 to branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add animeua/plugin.js animeua/plugin.json
+          git commit -m 'fix: add safe Ashdi fallback v45'
+          git push origin HEAD:v44-release-model
