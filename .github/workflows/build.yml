@@ -11,6 +11,7 @@ on:
       - 'repo-v4.json'
       - 'r.json'
       - 'r22.json'
+      - '.github/workflows/diag-player.yml'
   workflow_dispatch:
 
 permissions:
@@ -51,7 +52,10 @@ jobs:
           const packageUrl = `https://raw.githubusercontent.com/${process.env.GITHUB_REPOSITORY}/main/dist/com.anva.animeua-v${version}.sky`;
           const data = JSON.parse(fs.readFileSync('dist/plugins.json', 'utf8'));
           for (const plugin of data) {
-            if (plugin.packageName === 'com.anva.animeua') plugin.url = packageUrl;
+            if (plugin.packageName === 'com.anva.animeua') {
+              plugin.version = version;
+              plugin.url = packageUrl;
+            }
           }
           const json = JSON.stringify(data, null, 2) + '\n';
           for (const file of [
