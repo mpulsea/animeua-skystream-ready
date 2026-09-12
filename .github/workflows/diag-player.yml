@@ -10,69 +10,18 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect live player structure
+      - name: Inspect fallback player
         shell: bash
         run: |
           set -euo pipefail
           PAGE='https://animeua.club/8376-viiskova-istoriia-malenkoi-divchynky-2.html'
-          PLAYER='https://ashdi.vip/serial/122?season=2'
+          PLAYER='https://franko.uacdn.online/show/kinopoisk/1041139'
           UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'
           curl -L -sS -A "$UA" -e "$PAGE" "$PLAYER" -o /tmp/player.html
-          python3 - <<'PY'
-          import re, json
-          s=open('/tmp/player.html',encoding='utf-8',errors='ignore').read()
-          m=re.search(r'\bfile\s*:',s)
-          print('file marker:', bool(m))
-          if not m: raise SystemExit(0)
-          i=m.end()
-          while i<len(s) and s[i].isspace(): i+=1
-          q=s[i]
-          print('first char:', repr(q))
-          if q in "'\"`":
-              i+=1; out=[]; esc=False
-              while i<len(s):
-                  c=s[i]
-                  if esc:
-                      out.append(c); esc=False; i+=1; continue
-                  if c=='\\':
-                      esc=True; out.append(c); i+=1; continue
-                  if c==q: break
-                  out.append(c); i+=1
-              raw=''.join(out)
-          elif q=='[':
-              start=i; depth=0; quote=''; esc=False
-              while i<len(s):
-                  c=s[i]
-                  if quote:
-                      if esc: esc=False
-                      elif c=='\\': esc=True
-                      elif c==quote: quote=''
-                  else:
-                      if c in "'\"`": quote=c
-                      elif c=='[': depth+=1
-                      elif c==']':
-                          depth-=1
-                          if depth==0:
-                              raw=s[start:i+1]; break
-                  i+=1
-          else:
-              raw=s[i:i+1000]
-          print('raw length:', len(raw))
-          print('raw head:', raw[:1500])
-          try:
-              data=json.loads(raw)
-              print('json type:', type(data).__name__, 'len:', len(data) if hasattr(data,'__len__') else '-')
-              def walk(x,depth=0,path='root'):
-                  if depth>4: return
-                  if isinstance(x,list):
-                      print(path,'LIST',len(x))
-                      for j,v in enumerate(x[:6]): walk(v,depth+1,f'{path}[{j}]')
-                  elif isinstance(x,dict):
-                      print(path,'DICT keys=',list(x.keys()))
-                      for k,v in list(x.items())[:8]:
-                          if isinstance(v,(list,dict)): walk(v,depth+1,f'{path}.{k}')
-                          else: print(f'{path}.{k}=',repr(v)[:300])
-              walk(data)
-          except Exception as e:
-              print('JSON ERROR:',repr(e))
-          PY
+          echo "bytes: $(wc -c </tmp/player.html)"
+          echo '=== HTML ==='
+          sed -n '1,220p' /tmp/player.html
+          echo '=== URLS ==='
+          grep -Eo 'https?://[^"'"'"' <>]+' /tmp/player.html | head -100 || true
+          echo '=== KEYS ==='
+          grep -Eio '(file|playlist|episodes|season|m3u8|hls|video|sources|api|kinopoisk)[^,;<]{0,300}' /tmp/player.html | head -120 || true
