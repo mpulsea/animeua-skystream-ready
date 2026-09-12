@@ -38,6 +38,7 @@ jobs:
 
           find dist -maxdepth 1 -type f -name 'com.anva.animeua-v*.sky' -delete
           rm -f dist/plugins-v2.json dist/plugins-v3.json dist/plugins-v22-direct.json
+          rm -rf animeua/.build
 
           cp dist/com.anva.animeua.sky "dist/com.anva.animeua-v${VERSION}.sky"
 
@@ -51,7 +52,7 @@ jobs:
           }
           const json = JSON.stringify(data, null, 2) + '\n';
           fs.writeFileSync('dist/plugins.json', json);
-          // Compatibility for devices that already added the old repository URL.
+          // Compatibility only for devices that already added the old repository URL.
           fs.writeFileSync('dist/plugins-v4.json', json);
           NODE
 
