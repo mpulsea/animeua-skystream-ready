@@ -10,101 +10,40 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect 100 Metriv playback pipeline
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Execute current plugin end to end
         shell: bash
         run: |
-          set -euo pipefail
-          UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'
-          BASE='https://animeua.club'
-          TARGET='https://animeua.club/8172-100-metriv.html'
-          curl -L -sS --max-time 20 -A "$UA" -e "$BASE/" "$TARGET" -o /tmp/page.html
-          python - <<'PY'
-          import re,html,urllib.parse
-          s=open('/tmp/page.html',encoding='utf-8',errors='ignore').read(); target='https://animeua.club/8172-100-metriv.html'
-          print('PAGE_BYTES',len(s)); print('PAGE_HAS_FILE',bool(re.search(r'\bfile\s*:',s)))
-          tags=re.findall(r'<iframe\b[^>]*>',s,re.I); print('IFRAMES',len(tags)); out=[]
-          for i,t in enumerate(tags):
-              vals=[]
-              for name in ['data-src','src','data-url','data-player','data-frame','data-video']:
-                  m=re.search(r'(?:^|\s)'+name+r'\s*=\s*(["\'])(.*?)\1',t,re.I)
-                  if m:
-                      u=html.unescape(m.group(2)).replace('\\/','/'); u=urllib.parse.urljoin(target,u); vals.append((name,u))
-              print('IFRAME',i,vals); out += [u for _,u in vals if u.startswith('http') and u!=target]
-          open('/tmp/iframes','w').write('\n'.join(dict.fromkeys(out)))
-          PY
-          n=0
-          while IFS= read -r U; do
-            [ -n "$U" ] || continue
-            n=$((n+1)); echo "=== IFRAME $n $U ==="
-            curl -L -sS --max-time 20 -A "$UA" -e "$TARGET" "$U" -o "/tmp/iframe$n.html" || true
-            echo "BYTES $(wc -c < /tmp/iframe$n.html)"
-            python - "$n" <<'PY'
-          import sys,re,json,html
-          n=sys.argv[1]; s=open('/tmp/iframe'+n+'.html',encoding='utf-8',errors='ignore').read()
-          print('HAS_FILE',bool(re.search(r'\bfile\s*:',s)))
-          m=re.search(r'\bfile\s*:\s*',s)
-          if not m: raise SystemExit
-          p=m.end(); q=s[p:p+1]; val=''
-          if q in ('"',"'",'`'):
-              i=p+1; esc=False; b=[]
-              while i<len(s):
-                  c=s[i]
-                  if esc: b.append(c); esc=False
-                  elif c=='\\': b.append(c); esc=True
-                  elif c==q: break
-                  else: b.append(c)
-                  i+=1
-              val=''.join(b)
-          elif q=='[':
-              i=p; dep=0; quote=None; esc=False
-              while i<len(s):
-                  c=s[i]
-                  if quote:
-                      if esc: esc=False
-                      elif c=='\\': esc=True
-                      elif c==quote: quote=None
-                  else:
-                      if c in ('"',"'",'`'): quote=c
-                      elif c=='[': dep+=1
-                      elif c==']':
-                          dep-=1
-                          if dep==0: i+=1; break
-                  i+=1
-              val=s[p:i]
-          else:
-              mm=re.match(r'https?://[^\s,}]+',s[p:],re.I); val=mm.group(0) if mm else ''
-          val=html.unescape(val).replace('\\/','/')
-          print('FILE_LEN',len(val),'FILE_PREFIX',repr(val[:1000]))
-          leaves=[]
-          try:
-              cfg=json.loads(val)
-              def walk(x,path=[]):
-                  if isinstance(x,list):
-                      for z in x: walk(z,path)
-                  elif isinstance(x,dict):
-                      title=str(x.get('title','')); np=path+[title] if 'folder' in x and title else path
-                      if 'file' in x: leaves.append((path,title,x['file']))
-                      if 'folder' in x: walk(x['folder'],np)
-              walk(cfg)
-          except Exception as e: print('JSON_ERROR',repr(e))
-          print('LEAVES',len(leaves))
-          for j,(path,title,f0) in enumerate(leaves[:20]):
-              f=f0 if isinstance(f0,str) else json.dumps(f0,ensure_ascii=False)
-              f=html.unescape(f).replace('\\/','/')
-              rx=re.findall(r'\[([^\]]+)\](https?://[^,\s]+)',f)
-              direct=f if f.startswith('http') else ''
-              print('LEAF',j,'TYPE',type(f0).__name__,'PATH',path,'TITLE',title,'DIRECT',bool(direct),'REGEX',len(rx),'PREFIX',repr(f[:400]))
-              if j==0: open('/tmp/stream','w').write(rx[0][1] if rx else direct)
-          if not leaves and val.startswith('http'): open('/tmp/stream','w').write(val)
-          PY
-          done < /tmp/iframes
-          if [ -s /tmp/stream ]; then
-            STREAM=$(cat /tmp/stream); echo "=== STREAM $STREAM ==="
-            for REF in "$BASE/" "$TARGET"; do
-              echo "REFERER $REF"
-              curl -L -sS --max-time 20 -A "$UA" -e "$REF" -D /tmp/h "$STREAM" -o /tmp/b || true
-              head -15 /tmp/h || true; echo "BODY_BYTES $(wc -c < /tmp/b)"; head -c 500 /tmp/b || true; echo
-            done
-          else
-            echo 'NO_STREAM_EXTRACTED'
-          fi
+          cat > /tmp/harness.cjs <<'NODE'
+          const fs=require('fs'), vm=require('vm');
+          global.manifest={baseUrl:'https://animeua.club'};
+          for(const n of ['MultimediaItem','Episode','StreamResult']) global[n]=class {constructor(o){Object.assign(this,o)}};
+          global.http_get=async function(url,headers={}){
+            const r=await fetch(url,{headers,redirect:'follow'});
+            return {body:await r.text(),status:r.status,statusCode:r.status};
+          };
+          const code=fs.readFileSync('animeua/plugin.js','utf8');
+          vm.runInThisContext(code,{filename:'plugin.js'});
+          const call=(fn,...args)=>new Promise((resolve,reject)=>{let done=false; const cb=x=>{if(done)return;done=true;resolve(x)}; try{fn(...args,cb)}catch(e){reject(e)}; setTimeout(()=>{if(!done)reject(new Error('timeout'))},30000)});
+          (async()=>{
+            const target='https://animeua.club/8172-100-metriv.html';
+            const loaded=await call(global.load,target);
+            console.log('LOAD_SUCCESS',loaded&&loaded.success,'ERROR',loaded&&loaded.error);
+            const item=loaded&&loaded.data;
+            console.log('TITLE',item&&item.title);
+            console.log('DESCRIPTION',String(item&&item.description||'').slice(-500));
+            console.log('EPISODES',item&&item.episodes&&item.episodes.length);
+            if(item&&item.episodes) item.episodes.forEach((e,i)=>console.log('EP',i,JSON.stringify({name:e.name,url:e.url,episode:e.episode}).slice(0,1000)));
+            if(!item||!item.episodes||!item.episodes.length) process.exit(2);
+            for(let i=0;i<item.episodes.length;i++){
+              const ep=item.episodes[i];
+              const streams=await call(global.loadStreams,ep.url);
+              console.log('STREAM_RESULT_EP',i,'success=',streams&&streams.success,'error=',streams&&streams.error,'count=',streams&&streams.data&&streams.data.length);
+              if(streams&&streams.data) for(const s of streams.data) console.log('STREAM',JSON.stringify(s));
+            }
+          })().catch(e=>{console.error('HARNESS_FATAL',e);process.exit(1)});
+          NODE
+          node /tmp/harness.cjs
