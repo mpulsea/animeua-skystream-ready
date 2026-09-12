@@ -10,18 +10,16 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect fallback player
+      - name: Inspect UACDN player scripts
         shell: bash
         run: |
           set -euo pipefail
-          PAGE='https://animeua.club/8376-viiskova-istoriia-malenkoi-divchynky-2.html'
-          PLAYER='https://franko.uacdn.online/show/kinopoisk/1041139'
+          BASE='https://franko.uacdn.online'
           UA='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'
-          curl -L -sS -A "$UA" -e "$PAGE" "$PLAYER" -o /tmp/player.html
-          echo "bytes: $(wc -c </tmp/player.html)"
-          echo '=== HTML ==='
-          sed -n '1,220p' /tmp/player.html
-          echo '=== URLS ==='
-          grep -Eo 'https?://[^"'"'"' <>]+' /tmp/player.html | head -100 || true
-          echo '=== KEYS ==='
-          grep -Eio '(file|playlist|episodes|season|m3u8|hls|video|sources|api|kinopoisk)[^,;<]{0,300}' /tmp/player.html | head -120 || true
+          for P in '/player/js/player-page.js?v=cb5336a683db' '/player/js/player_ua_22_fs.js?v=61d19af5b46a'; do
+            F=/tmp/$(basename "${P%%\?*}")
+            echo "=== $P ==="
+            curl -L -sS -A "$UA" -e "$BASE/show/kinopoisk/1041139" "$BASE$P" -o "$F"
+            echo "bytes: $(wc -c < "$F")"
+            grep -Ein 'fetch\(|ajax|axios|XMLHttpRequest|\.get\(|\.post\(|/api/|/player/|episode|translation|translate|files|video|m3u8|playlist|source|media' "$F" | head -220 || true
+          done
