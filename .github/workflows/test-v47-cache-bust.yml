@@ -1,0 +1,83 @@
+name: Test AnimeUA v47 cache bust
+
+on:
+  push:
+    branches: [v47-v42-playback]
+    paths:
+      - '.github/workflows/test-v47-cache-bust.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: v47-v42-playback
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Apply v47 cache-busting detail URLs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('animeua/plugin.js')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('skystream=46','skystream=47')
+          needle="function txt(s){return dec(s).replace(/<br\\s*\\/?>/gi,' ').replace(/<[^>]+>/g,'').replace(/\\s+/g,' ').trim()}\n"
+          add="function detailKey(u){u=abs(u);if(!u)return'';try{var x=new URL(u);if(x.hostname==='animeua.club'||x.hostname==='www.animeua.club'){x.searchParams.set('skystream_plugin','47');return x.toString()}}catch(e){}return u}\n"
+          if add not in s:
+              if needle not in s: raise SystemExit('txt needle missing')
+              s=s.replace(needle,needle+add,1)
+          old="u=abs(ot?attr(ot[0],'href'):'')"
+          new="u=detailKey(ot?attr(ot[0],'href'):'')"
+          if old not in s: raise SystemExit('cards url needle missing')
+          s=s.replace(old,new,1)
+          s=s.replace('[AnimeUA v46]','[AnimeUA v47]')
+          p.write_text(s,encoding='utf-8')
+          j=Path('animeua/plugin.json')
+          d=json.loads(j.read_text(encoding='utf-8')); d['version']=47
+          j.write_text(json.dumps(d,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          node --check animeua/plugin.js
+      - name: Validate separate release cards and playback
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/test.cjs <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          global.manifest={baseUrl:'https://animeua.club'};
+          for(const n of ['MultimediaItem','Episode','StreamResult']) global[n]=class{constructor(o){Object.assign(this,o)}};
+          async function net(m,u,h={},b){const r=await fetch(u,{method:m,headers:h,body:b,redirect:'follow'});return{body:await r.text(),status:r.status,statusCode:r.status}}
+          global.http_get=(u,h={})=>net('GET',u,h); global.http_post=(u,h={},b='')=>net('POST',u,h,b);
+          vm.runInThisContext(fs.readFileSync('animeua/plugin.js','utf8'));
+          const call=(f,...a)=>new Promise((res,rej)=>{let d=false;try{f(...a,x=>{if(!d){d=true;res(x)}})}catch(e){rej(e)};setTimeout(()=>!d&&rej(new Error('timeout')),45000)});
+          async function check(url,label,count){const x=await call(global.load,url);if(!x?.success)throw new Error(label+' load '+JSON.stringify(x));const eps=x.data.episodes||[];console.log(label,'url',url,'episodes',eps.length,'seasons',[...new Set(eps.map(e=>e.season))]);if(eps.length!==count)throw new Error(label+' count '+eps.length);if([...new Set(eps.map(e=>e.season))].join(',')!=='1')throw new Error(label+' leaked seasons');for(const ep of [eps[0],eps[eps.length-1]]){const r=await call(global.loadStreams,ep.url);if(!r?.success||!r.data?.length)throw new Error(label+' no streams '+JSON.stringify(r));const st=r.data[0],q=await fetch(st.url,{headers:st.headers||{},redirect:'follow'}),t=await q.text();console.log(label,'E'+ep.episode,'HTTP',q.status,'M3U8',t.startsWith('#EXTM3U'));if(!q.ok||!t.startsWith('#EXTM3U'))throw new Error(label+' bad stream')}}
+          (async()=>{
+            const s=await call(global.search,'Реінкарнація безробітного');
+            if(!s?.success)throw new Error('search failed');
+            const urls=(s.data||[]).map(x=>x.url).filter(u=>/mushoku|bezrobitnogo/i.test(u));
+            console.log('SEARCH URLS',urls);
+            if(!urls.length||urls.some(u=>!u.includes('skystream_plugin=47')))throw new Error('cache bust missing');
+            await check('https://animeua.club/3114-mushoku-tensei-isekai-ittara-honki-dasu.html?skystream_plugin=47','MUSHOKU CARD 1',11);
+            await check('https://animeua.club/2218-mushoku-tensei-isekai-ittara-honki-dasu-2.html?skystream_plugin=47','MUSHOKU CARD 2',13);
+            await check('https://animeua.club/8363-reinkarnaciia-bezrobitnogo-istoriia-pro-prygody-v-inshomu-sviti-3.html?skystream_plugin=47','MUSHOKU CARD 3',11);
+            console.log('V47_CACHE_BUST_OK');
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          node /tmp/test.cjs
+      - name: Commit tested v47 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add animeua/plugin.js animeua/plugin.json
+          git commit -m 'fix: bust stale detail cache for isolated releases v47'
+          git push origin HEAD:v47-v42-playback
