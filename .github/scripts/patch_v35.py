@@ -1,0 +1,112 @@
+from pathlib import Path
+import json
+
+p = Path('animeua/plugin.js')
+s = p.read_text()
+old = "async function playerDebug(s,pageUrl){var d={iframe:false,player:false,file:false,playerLen:0,fileType:'none',error:'',status:0,attempt:0};try{var f=s.match(/<div[^>]*class=[\"'][^\"']*video-inside[^\"']*[\"'][^>]*>[\\s\\S]*?<iframe[^>]*(?:data-src|src)=[\"']([^\"']+)[\"'][^>]*>/i)||s.match(/<iframe[^>]*(?:data-src|src)=[\"']([^\"']+)[\"'][^>]*>/i);if(!f)return{file:null,debug:d};d.iframe=true;var pu=abs(f[1]),ph='',rr=await getRaw(pu,{});d.attempt=1;d.status=rr.status||0;if(rr.body){ph=rr.body}else{var relay='https://animeua-image-proxy.wholesale-source.workers.dev/player?page='+encodeURIComponent(pageUrl||manifest.baseUrl+'/');rr=await getRaw(relay,{});d.attempt=9;d.status=rr.status||0;if(rr.error)d.error=rr.error;if(rr.body)ph=rr.body}d.player=!!ph;d.playerLen=ph?ph.length:0;if(!ph)return{file:null,debug:d};var pf=playerFileValue(ph);d.file=!!pf;if(pf)d.fileType=/^https?:\\/\\//i.test(pf)?'url':(pf.charAt(0)==='['?'array':'other');return{file:pf,debug:d}}catch(e){d.error=String(e).slice(0,120);return{file:null,debug:d}}}"
+new = "async function playerDebug(s,pageUrl){var d={iframe:false,player:false,file:false,playerLen:0,fileType:'none',error:'',status:0,attempt:0};try{var pf=playerFileValue(s);if(pf){d.player=true;d.file=true;d.playerLen=s.length;d.fileType=/^https?:\\/\\//i.test(pf)?'url':(pf.charAt(0)==='['?'array':'other');return{file:pf,debug:d}}var f=s.match(/<iframe[^>]*(?:data-src|src|data-url|data-player|data-frame|data-video)=[\"']([^\"']+)[\"'][^>]*>/i),ph='',rr;if(f){d.iframe=true;var pu=abs(f[1]);rr=await getRaw(pu,{});d.attempt=1;d.status=rr.status||0;if(rr.error)d.error=rr.error;if(rr.body){ph=rr.body;d.player=true;d.playerLen=ph.length;pf=playerFileValue(ph)}}if(!pf){var relay='https://animeua-image-proxy.wholesale-source.workers.dev/player?page='+encodeURIComponent(pageUrl||manifest.baseUrl+'/');rr=await getRaw(relay,{});d.attempt=9;d.status=rr.status||d.status;if(rr.error)d.error=rr.error;if(rr.body){ph=rr.body;d.player=true;d.playerLen=ph.length;pf=playerFileValue(ph)}}d.file=!!pf;if(pf)d.fileType=/^https?:\\/\\//i.test(pf)?'url':(pf.charAt(0)==='['?'array':'other');return{file:pf,debug:d}}catch(e){d.error=String(e).slice(0,120);return{file:null,debug:d}}}"
+if old not in s:
+    raise SystemExit('stable playerDebug block not found')
+s = s.replace(old, new, 1).replace('skystream=27', 'skystream=35')
+p.write_text(s)
+
+mp = Path('animeua/plugin.json')
+data = json.loads(mp.read_text())
+if data.get('version') != 34:
+    raise SystemExit(f"expected v34, got {data.get('version')}")
+data['version'] = 35
+mp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+
+wp = Path('proxy/src/index.js')
+w = wp.read_text()
+old_find = '''function findPlayerIframe(html, pageUrl) {
+  const m = html.match(/<div[^>]*class=["'][^"']*video-inside[^"']*["'][^>]*>[\\s\\S]*?<iframe[^>]*(?:data-src|src)=["']([^"']+)["'][^>]*>/i)
+    || html.match(/<iframe[^>]*(?:data-src|src)=["']([^"']+)["'][^>]*>/i);
+  return m ? absoluteUrl(m[1], pageUrl) : '';
+}
+'''
+new_find = '''function findPlayerIframe(html, pageUrl) {
+  const tags = String(html || '').match(/<iframe\\b[^>]*>/gi) || [];
+  const names = ['data-src', 'src', 'data-url', 'data-player', 'data-frame', 'data-video'];
+  for (const tag of tags) {
+    for (const name of names) {
+      const raw = attr(tag, name);
+      if (!raw || /^(?:about:|javascript:)/i.test(raw)) continue;
+      const u = absoluteUrl(raw, pageUrl);
+      if (u) return u;
+    }
+  }
+  const patterns = [
+    /(?:iframe|player|video|embed|src|url)\\s*[:=]\\s*["']([^"']+)["']/i,
+    /["']((?:https?:)?\\/\\/[^"']*(?:player|embed|video)[^"']*)["']/i,
+  ];
+  for (const re of patterns) {
+    const m = String(html || '').match(re);
+    if (!m) continue;
+    const u = absoluteUrl(m[1], pageUrl);
+    if (u) return u;
+  }
+  return '';
+}
+'''
+if old_find not in w:
+    raise SystemExit('worker findPlayerIframe block not found')
+w = w.replace(old_find, new_find, 1)
+
+old_no_iframe = "  if (!iframe) return new Response('Iframe not found', { status: 404, headers: textHeaders() });"
+new_no_iframe = "  if (!iframe) return new Response(pageHtml, { status: 200, headers: textHeaders({ 'x-animeua-player-source': 'page', 'x-animeua-player-length': String(pageHtml.length) }) });"
+if old_no_iframe not in w:
+    raise SystemExit('worker no-iframe branch not found')
+w = w.replace(old_no_iframe, new_no_iframe, 1)
+
+old_tail = '''  const body = await player.text();
+  return new Response(body, {
+    status: player.ok ? 200 : 502,
+    headers: textHeaders({
+      'x-animeua-player-status': String(player.status),
+      'x-animeua-iframe-host': iframeUrl.hostname,
+      'x-animeua-player-length': String(body.length),
+    }),
+  });
+'''
+new_tail = '''  let body = await player.text();
+  let finalStatus = player.status;
+  let finalHost = iframeUrl.hostname;
+  if (!/\\bfile\\s*:/i.test(body)) {
+    const nested = findPlayerIframe(body, iframeUrl.toString());
+    if (nested && nested !== iframeUrl.toString()) {
+      try {
+        const nestedUrl = new URL(nested);
+        if (/^https?:$/.test(nestedUrl.protocol)) {
+          const nestedResp = await fetch(nestedUrl.toString(), {
+            headers: {
+              'User-Agent': UA,
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Referer': iframeUrl.toString(),
+              'Origin': iframeUrl.origin,
+            },
+            redirect: 'follow',
+          });
+          const nestedBody = await nestedResp.text();
+          if (nestedBody) {
+            body = nestedBody;
+            finalStatus = nestedResp.status;
+            finalHost = nestedUrl.hostname;
+          }
+        }
+      } catch {}
+    }
+  }
+  return new Response(body, {
+    status: finalStatus >= 200 && finalStatus < 400 ? 200 : 502,
+    headers: textHeaders({
+      'x-animeua-player-status': String(finalStatus),
+      'x-animeua-iframe-host': finalHost,
+      'x-animeua-player-length': String(body.length),
+    }),
+  });
+'''
+if old_tail not in w:
+    raise SystemExit('worker player response block not found')
+w = w.replace(old_tail, new_tail, 1)
+wp.write_text(w)
