@@ -1,0 +1,105 @@
+name: Test AnimeUA v43 season fix
+
+on:
+  push:
+    branches: [v43-season-fix]
+    paths:
+      - '.github/workflows/test-v43-season.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: v43-season-fix
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Apply isolated season-aware patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json,base64,urllib.request
+          repo='mpulsea/animeua-skystream-ready'
+          blob='20de21acf361b271132bf31c790f26babff247f6'
+          req=urllib.request.Request(f'https://api.github.com/repos/{repo}/git/blobs/{blob}',headers={'Accept':'application/vnd.github+json','User-Agent':'animeua-v43-test'})
+          with urllib.request.urlopen(req,timeout=20) as r: obj=json.load(r)
+          replacement=base64.b64decode(obj['content']).decode('utf-8')
+          p=Path('animeua/plugin.js'); s=p.read_text(encoding='utf-8')
+          start=s.index('function episodeNumber')
+          end=s.index('globalThis.getHome=',start)
+          s=s[:start]+replacement+s[end:]
+          s=s.replace('skystream=42','skystream=43')
+          p.write_text(s,encoding='utf-8')
+          j=Path('animeua/plugin.json'); data=json.loads(j.read_text(encoding='utf-8')); data['version']=43; j.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          PY
+          node --check animeua/plugin.js
+          node -e "const j=require('./animeua/plugin.json'); if(j.version!==43) process.exit(2)"
+
+      - name: Validate v43 live without touching main
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/harness.cjs <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          global.manifest={baseUrl:'https://animeua.club'};
+          for(const n of ['MultimediaItem','Episode','StreamResult']) global[n]=class {constructor(o){Object.assign(this,o)}};
+          let blockAshdi=false;
+          async function network(method,url,headers={},body){
+            if(blockAshdi && /ashdi\.vip/i.test(url)) throw new Error('TEST_BLOCKED_ASHDI');
+            const r=await fetch(url,{method,headers,body,redirect:'follow'});
+            return {body:await r.text(),status:r.status,statusCode:r.status};
+          }
+          global.http_get=(url,headers={})=>network('GET',url,headers);
+          global.http_post=(url,headers={},body='')=>network('POST',url,headers,body);
+          vm.runInThisContext(fs.readFileSync('animeua/plugin.js','utf8'),{filename:'plugin.js'});
+          const call=(fn,...args)=>new Promise((resolve,reject)=>{let done=false;const cb=x=>{if(!done){done=true;resolve(x)}};try{fn(...args,cb)}catch(e){reject(e)};setTimeout(()=>{if(!done)reject(new Error('timeout'))},45000)});
+          async function streamOk(st,label){if(!st||!/^https?:\/\//i.test(st.url))throw new Error(label+' bad stream');const r=await fetch(st.url,{headers:st.headers||{},redirect:'follow'}),b=await r.text();console.log(label,'HTTP',r.status,'M3U8',b.startsWith('#EXTM3U'),'SRC',st.source);if(!r.ok||!b.startsWith('#EXTM3U'))throw new Error(label+' unhealthy')}
+          async function verify(url,label,expectedSeason,expectedMin,expectedMax,opts={}){
+            blockAshdi=!!opts.blockAshdi;
+            const a=await call(global.load,url),b=await call(global.load,url);
+            if(!a||!a.success||!b||!b.success)throw new Error(label+' load failed');
+            const ea=a.data.episodes||[],eb=b.data.episodes||[];
+            console.log('\n',label,'COUNT',ea.length,'SEASONS',[...new Set(ea.map(e=>e.season))],'EPS',ea.map(e=>e.episode).slice(0,40));
+            if(ea.length<expectedMin||(expectedMax!=null&&ea.length>expectedMax))throw new Error(label+' bad count '+ea.length);
+            if(ea.length!==eb.length)throw new Error(label+' unstable count');
+            if(expectedSeason!=null&&ea.some(e=>Number(e.season)!==expectedSeason))throw new Error(label+' wrong season labels '+ea.map(e=>e.season));
+            for(let i=0;i<ea.length;i++){if(ea[i].url!==eb[i].url)throw new Error(label+' unstable token');if(!String(ea[i].url).startsWith('animeua:episode:'))throw new Error(label+' bad token');}
+            const picks=[ea[0]]; if(ea.length>1)picks.push(ea[ea.length-1]);
+            for(const ep of picks){const r=await call(global.loadStreams,ep.url),ss=r&&r.data||[];console.log(label,'S',ep.season,'E',ep.episode,'STREAMS',ss.length,'ERR',r&&r.error);if(!r||!r.success||!ss.length)throw new Error(label+' no streams S'+ep.season+' E'+ep.episode+' '+JSON.stringify(r));await streamOk(ss[0],label+' S'+ep.season+'E'+ep.episode)}
+            blockAshdi=false;
+            return ea;
+          }
+          (async()=>{
+            await verify('https://animeua.club/8172-100-metriv.html','MOVIE REGRESSION',1,1,1);
+            await verify('https://animeua.club/8375-100-divchat-iaki-duzhe-duzhe-duzhe-duzhe-duzhe-tebe-kokhaut-3.html','SINGLE SEASON REGRESSION',3,10,20);
+            await verify('https://animeua.club/8376-viiskova-istoriia-malenkoi-divchynky-2.html','PROVIDER SEASON REMAP',2,13,13,{blockAshdi:true});
+            await verify('https://animeua.club/3114-mushoku-tensei-isekai-ittara-honki-dasu.html','MUSHOKU S1',1,11,30);
+            await verify('https://animeua.club/2218-mushoku-tensei-isekai-ittara-honki-dasu-2.html','MUSHOKU S2',2,10,30);
+            await verify('https://animeua.club/8363-reinkarnaciia-bezrobitnogo-istoriia-pro-prygody-v-inshomu-sviti-3.html','MUSHOKU S3',3,7,30);
+            const h=await verify('https://animeua.club/7047-haikyuu.html','HAIKYUU MULTI',null,70,120);
+            const hs=[...new Set(h.map(e=>Number(e.season)))].sort(); if(hs.join(',')!=='1,2,3,4')throw new Error('HAIKYUU missing seasons '+hs.join(','));
+            const s2=h.find(e=>Number(e.season)===2&&Number(e.episode)===1),s4=h.find(e=>Number(e.season)===4&&Number(e.episode)===1);
+            for(const ep of [s2,s4]){if(!ep)throw new Error('HAIKYUU missing sample');const r=await call(global.loadStreams,ep.url),ss=r&&r.data||[];if(!r||!r.success||!ss.length)throw new Error('HAIKYUU no stream '+JSON.stringify(ep));await streamOk(ss[0],'HAIKYUU S'+ep.season+'E'+ep.episode)}
+            console.log('\nV43_SEASON_FIX_OK');
+          })().catch(e=>{console.error('V43_SEASON_FIX_FAIL',e);process.exit(1)});
+          NODE
+          node /tmp/harness.cjs
+
+      - name: Commit tested v43 source to branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add animeua/plugin.js animeua/plugin.json
+          git commit -m 'fix: make AnimeUA episodes season-aware v43'
+          git push origin HEAD:v43-season-fix
